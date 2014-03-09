@@ -497,6 +497,11 @@ print_object(ruby_heap_obj_t *obj) {
     if (type == RUBY_T_DATA) {
       name_title = "struct";
       p = obj->as.obj.as.value;
+    } else if (type == RUBY_T_OBJECT || type == RUBY_T_ICLASS) {
+      name_title = "name";
+      ruby_heap_obj_t *clazz = heap_map_[obj->as.obj.class_addr];
+      assert(clazz);
+      p = clazz->as.obj.as.value;
     } else if (type == RUBY_T_STRING) {
       name_title = "value";
       p = obj->as.obj.as.value;
@@ -509,7 +514,10 @@ print_object(ruby_heap_obj_t *obj) {
       p = buf;
     }
     if (name_title) {
-      printf("%18s: %s\n", name_title, p);
+      printf("%18s: %s%s%s\n", name_title,
+        type == RUBY_T_STRING ? "\"" : "",
+        p,
+        type == RUBY_T_STRING ? "\"" : "");
     }
     printf("%18s: %zu\n", "size", obj->as.obj.memsize);
     if (obj->refs_to) {
