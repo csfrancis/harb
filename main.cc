@@ -598,7 +598,7 @@ get_ruby_heap_obj_arg(const char *args) {
 
   ruby_heap_obj_t *obj = heap_map_[addr];
   if (!obj) {
-    printf("error: no ruby object found at address %" PRIx64 "\n", addr);
+    printf("error: no ruby object found at address 0x%" PRIx64 "\n", addr);
     return NULL;
   }
 
