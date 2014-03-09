@@ -722,7 +722,7 @@ main(int argc, char **argv) {
   parse_file(argv[1]);
 
   while (!exit_) {
-    line = readline("rb_heapa> ");
+    line = readline("harb> ");
 
     if (line == NULL) {
       break;

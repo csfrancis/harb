@@ -1,12 +1,12 @@
-# rb_heapa
+# harb
 
-A Ruby heap analyzer. Early yet. Only built on Linux.
+A **H**eap **A**nalyzer for **R**uby. Early yet. Only built on Linux.
 
 #### Building
 `make`
 
 #### Usage
-`rb_heapa <heap_dump_file>`
+`harb <heap_dump_file>`
 
 #### Dependencies
 - libgoogle-perftools-dev
