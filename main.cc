@@ -13,6 +13,7 @@
 #include <jansson.h>
 
 #include <list>
+#include <deque>
 
 #include <city.h>
 
@@ -157,6 +158,11 @@ get_heap_object(uint64_t addr, bool create) {
     return obj;
   }
   return it->second;
+}
+
+static inline bool
+is_root_object(ruby_heap_obj_t *obj) {
+  return (obj->flags & RUBY_T_MASK) == RUBY_T_ROOT;
 }
 
 static const char *
@@ -321,12 +327,13 @@ parse_root_object(json_t *root_o) {
   json_t *name_o = json_object_get(root_o, "root");
   assert(name_o);
 
+  ruby_heap_obj_t *root = heap_map_[kRootAddr];
   ruby_heap_obj_t *gc_root = create_heap_object();
   gc_root->flags = RUBY_T_ROOT;
   gc_root->as.root.name = get_string(json_string_value(name_o));
+  gc_root->refs_from.push_front(root);
   build_obj_references(gc_root, json_object_get(root_o, "references"));
 
-  ruby_heap_obj_t *root = heap_map_[kRootAddr];
   for (i = 0; i < kMaxRoots; ++i) {
     if (root->refs_to[i] == NULL) {
       root->refs_to[i] = gc_root;
@@ -442,7 +449,7 @@ parse_file(const char *filename) {
 
 static const char *
 print_object_summary(ruby_heap_obj_t *obj, char *buf, size_t buf_sz) {
-  uint32_t type = obj->flags & RUBY_T_ROOT;
+  uint32_t type = obj->flags & RUBY_T_MASK;
   if (type == RUBY_T_ROOT) {
     return "ROOT";
   }
@@ -476,7 +483,7 @@ print_object_summary(ruby_heap_obj_t *obj, char *buf, size_t buf_sz) {
 static void
 print_ref_object(ruby_heap_obj_t *obj) {
   char buf[64];
-  if ((obj->flags & RUBY_T_MASK) == RUBY_T_ROOT) {
+  if (is_root_object(obj)) {
     printf("%20s  ROOT (%s)\n", "", obj->as.root.name);
   } else {
     printf("%20s  0x%" PRIx64 " (%s)\n", "", obj->as.obj.addr, print_object_summary(obj, buf, sizeof(buf)));
@@ -485,7 +492,7 @@ print_ref_object(ruby_heap_obj_t *obj) {
 
 static void
 print_object(ruby_heap_obj_t *obj) {
-  uint32_t type = obj->flags & RUBY_T_ROOT;
+  uint32_t type = obj->flags & RUBY_T_MASK;
   if (type == RUBY_T_ROOT) {
     printf("ROOT (%s)\n", obj->as.root.name);
   } else {
@@ -552,9 +559,11 @@ typedef struct command {
 static void cmd_quit(const char *);
 static void cmd_help(const char *);
 static void cmd_print(const char *);
+static void cmd_rootpath(const char *);
 
 command_t commands_[] = {
   { "print", cmd_print, "Prints heap info for the address specified" },
+  { "rootpath", cmd_rootpath, "Display the root path for the object specified" },
   { "help", cmd_help, "Displays this message"},
   { "quit", cmd_quit, "Exits the program" },
   { NULL, NULL, NULL }
@@ -574,26 +583,89 @@ cmd_help(const char *) {
   printf("\n");
 }
 
-static void
-cmd_print(const char *args) {
+static ruby_heap_obj_t *
+get_ruby_heap_obj_arg(const char *args) {
   if (args == NULL || strlen(args) == 0) {
     printf("error: you must specify an address\n");
-    return;
+    return NULL;
   }
 
   uint64_t addr = strtoull(args, NULL, 0);
   if (addr == 0) {
     printf("error: you must specify a valid heap address\n");
-    return;
+    return NULL;
   }
 
   ruby_heap_obj_t *obj = heap_map_[addr];
   if (!obj) {
     printf("error: no ruby object found at address %" PRIx64 "\n", addr);
+    return NULL;
+  }
+
+  return obj;
+}
+
+static void
+cmd_print(const char *args) {
+  ruby_heap_obj_t *obj = get_ruby_heap_obj_arg(args);
+  if (!obj) {
     return;
   }
 
   print_object(obj);
+}
+
+static void
+cmd_rootpath(const char *args) {
+  bool found = false;
+  ruby_heap_obj_t *obj = get_ruby_heap_obj_arg(args);
+  if (!obj) {
+    return;
+  }
+
+  ruby_heap_obj_t *cur;
+  ruby_heap_obj_t *root = heap_map_[kRootAddr];
+  deque<ruby_heap_obj_t *> q;
+  sparse_hash_set<ruby_heap_obj_t *> visited;
+  sparse_hash_map<ruby_heap_obj_t *, ruby_heap_obj_t *> parent;
+
+  q.push_back(obj);
+  visited.insert(obj);
+
+  while (!q.empty()) {
+    cur = q.front();
+    q.pop_front();
+
+    if (cur == root) {
+      found = true;
+      break;
+    }
+
+    for (ruby_heap_obj_list_t::const_iterator it = cur->refs_from.begin();
+         it != cur->refs_from.end();
+         ++it) {
+      if (visited.find(*it) == visited.end()) {
+        visited.insert(*it);
+        q.push_back(*it);
+        parent[*it] = cur;
+      }
+    }
+  }
+
+  if (!found) {
+    printf("error: could not find path to root for 0x%" PRIx64 "\n", obj->as.obj.addr);
+    return;
+  }
+
+  printf("\nroot path to 0x%" PRIx64 ":\n", obj->as.obj.addr);
+  cur = root;
+  while (cur != NULL) {
+    if (cur != root) {
+      print_ref_object(cur);
+    }
+    cur = parent[cur];
+  }
+  printf("\n");
 }
 
 static void execute_command(char *line) {
