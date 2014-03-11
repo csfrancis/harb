@@ -415,6 +415,30 @@ parse_heap_object(json_t *heap_o, uint32_t type) {
   return obj;
 }
 
+static ruby_heap_obj_t *
+read_heap_object(FILE *f) {
+  json_t *o = json_loadf(f, JSON_DISABLE_EOF_CHECK | JSON_ALLOW_NUL, NULL);
+  if (o == NULL) {
+    return NULL;
+  }
+
+  assert(json_typeof(o) == JSON_OBJECT);
+
+  json_t *type_o = json_object_get(o, "type");
+  assert(type_o);
+  uint32_t type = get_heap_object_type(json_string_value(type_o));
+
+  ruby_heap_obj_t *heap_obj;
+  if (type == RUBY_T_ROOT) {
+    heap_obj = parse_root_object(o);
+  } else {
+    heap_obj = parse_heap_object(o, type);
+  }
+
+  json_decref(o);
+  return heap_obj;
+}
+
 static void
 parse_file(const char *filename) {
   int i;
@@ -426,21 +450,12 @@ parse_file(const char *filename) {
 
   printf("parsing %s .", filename);
 
-  json_t *o = json_loadf(f, JSON_DISABLE_EOF_CHECK | JSON_ALLOW_NUL, NULL);
-  for (i = 0; o != NULL; json_decref(o), o = json_loadf(f, JSON_DISABLE_EOF_CHECK | JSON_ALLOW_NUL, NULL), ++i) {
-    assert(json_typeof(o) == JSON_OBJECT);
-
-    json_t *type_o = json_object_get(o, "type");
-    assert(type_o);
-    uint32_t type = get_heap_object_type(json_string_value(type_o));
-
-    ruby_heap_obj_t *heap_obj;
-    if (type == RUBY_T_ROOT) {
-      heap_obj = parse_root_object(o);
-      root_objects.push_back(heap_obj);
+  ruby_heap_obj_t *obj = read_heap_object(f);
+  for (i = 0; obj != NULL; obj = read_heap_object(f), ++i) {
+    if (is_root_object(obj)) {
+      root_objects.push_back(obj);
     } else {
-      heap_obj = parse_heap_object(o, type);
-      heap_map_[heap_obj->as.obj.addr] = heap_obj;
+      heap_map_[obj->as.obj.addr] = obj;
     }
 
     if (i % 100000 == 0) { printf("."); }
