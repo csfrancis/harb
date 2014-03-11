@@ -147,15 +147,10 @@ create_heap_object(uint64_t addr) {
 }
 
 static ruby_heap_obj_t *
-get_heap_object(uint64_t addr, bool create) {
+get_heap_object(uint64_t addr) {
   ruby_heap_map_t::const_iterator it = heap_map_.find(addr);
   if (it == heap_map_.end()) {
-    if (!create) {
-      return NULL;
-    }
-    ruby_heap_obj_t *obj = create_heap_object(addr);
-    heap_map_[addr] = obj;
-    return obj;
+    return NULL;
   }
   return it->second;
 }
@@ -320,12 +315,14 @@ parse_obj_references(ruby_heap_obj_t *obj, json_t *refs_array) {
 static void
 add_inverse_obj_references(ruby_heap_obj_t *obj) {
   uint64_t *ref_ptr = obj->refs_to;
-  if (!ref_ptr)
+  if (!ref_ptr) {
     return;
+  }
   while (uint64_t addr = *ref_ptr++) {
-    ruby_heap_obj_t *ref = get_heap_object(addr, false);
-    if (ref)
+    ruby_heap_obj_t *ref = get_heap_object(addr);
+    if (ref) {
       ref->refs_from.push_back(obj);
+    }
   }
 }
 
@@ -343,7 +340,7 @@ build_back_references() {
   }
 }
 
-static void
+static ruby_heap_obj_t *
 parse_root_object(json_t *root_o) {
   json_t *name_o = json_object_get(root_o, "root");
   assert(name_o);
@@ -351,14 +348,14 @@ parse_root_object(json_t *root_o) {
   ruby_heap_obj_t *gc_root = create_heap_object();
   gc_root->flags = RUBY_T_ROOT;
   gc_root->as.root.name = get_string(json_string_value(name_o));
-  root_objects.push_back(gc_root);
   parse_obj_references(gc_root, json_object_get(root_o, "references"));
+  return gc_root;
 }
 
-static void
+static ruby_heap_obj_t *
 parse_heap_object(json_t *heap_o, uint32_t type) {
   json_t *addr_o = json_object_get(heap_o, "address");
-  if (!addr_o) return;
+  if (!addr_o) return NULL;
 
   assert(json_typeof(addr_o) == JSON_STRING);
   const char *addr_s = json_string_value(addr_o);
@@ -366,7 +363,7 @@ parse_heap_object(json_t *heap_o, uint32_t type) {
 
   uint64_t addr = strtoull(addr_s, NULL, 0);
   assert(addr != 0);
-  ruby_heap_obj_t *obj = get_heap_object(addr, true);
+  ruby_heap_obj_t *obj = create_heap_object(addr);
   obj->flags = type;
 
   if (type == RUBY_T_STRING) {
@@ -415,6 +412,7 @@ parse_heap_object(json_t *heap_o, uint32_t type) {
   obj->as.obj.memsize += kRubyObjectSize;
 
   parse_obj_references(obj, json_object_get(heap_o, "references"));
+  return obj;
 }
 
 static void
@@ -436,17 +434,13 @@ parse_file(const char *filename) {
     assert(type_o);
     uint32_t type = get_heap_object_type(json_string_value(type_o));
 
-    switch (type) {
-      case RUBY_T_ROOT:
-      {
-        parse_root_object(o);
-        break;
-      }
-      default:
-      {
-        parse_heap_object(o, type);
-        break;
-      }
+    ruby_heap_obj_t *heap_obj;
+    if (type == RUBY_T_ROOT) {
+      heap_obj = parse_root_object(o);
+      root_objects.push_back(heap_obj);
+    } else {
+      heap_obj = parse_heap_object(o, type);
+      heap_map_[heap_obj->as.obj.addr] = heap_obj;
     }
 
     if (i % 100000 == 0) { printf("."); }
@@ -540,7 +534,7 @@ print_object(ruby_heap_obj_t *obj) {
     if (obj->refs_to) {
       printf("%18s: [\n", "references to");
       for (uint32_t i = 0; obj->refs_to[i]; ++i) {
-        ruby_heap_obj_t *ref_obj = get_heap_object(obj->refs_to[i], false);
+        ruby_heap_obj_t *ref_obj = get_heap_object(obj->refs_to[i]);
         if (ref_obj) {
           print_ref_object(ref_obj);
         } else {
