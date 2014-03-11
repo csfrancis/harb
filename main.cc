@@ -321,14 +321,13 @@ build_obj_references(ruby_heap_obj_t *obj, json_t *refs_array) {
 
 static void
 parse_root_object(json_t *root_o) {
-  uint32_t i;
   json_t *name_o = json_object_get(root_o, "root");
   assert(name_o);
 
   ruby_heap_obj_t *gc_root = create_heap_object();
   gc_root->flags = RUBY_T_ROOT;
   gc_root->as.root.name = get_string(json_string_value(name_o));
-  root_objects.push_back(gc_root)
+  root_objects.push_back(gc_root);
   build_obj_references(gc_root, json_object_get(root_o, "references"));
 }
 
