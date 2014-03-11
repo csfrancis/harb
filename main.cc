@@ -292,7 +292,7 @@ get_heap_object_type_string(uint32_t type) {
 }
 
 static void
-build_obj_references(ruby_heap_obj_t *obj, json_t *refs_array) {
+parse_obj_references(ruby_heap_obj_t *obj, json_t *refs_array) {
   if (!refs_array) {
     return;
   }
@@ -313,11 +313,34 @@ build_obj_references(ruby_heap_obj_t *obj, json_t *refs_array) {
     assert(child_addr != 0);
     obj->refs_to[i] = child_addr;
 
-    ruby_heap_obj_t *child = get_heap_object(child_addr, true);
-    assert(child);
-    child->refs_from.push_front(obj);
   }
   obj->refs_to[i] = 0;
+}
+
+static void
+add_inverse_obj_references(ruby_heap_obj_t *obj) {
+  uint64_t *ref_ptr = obj->refs_to;
+  if (!ref_ptr)
+    return;
+  while (uint64_t addr = *ref_ptr++) {
+    ruby_heap_obj_t *ref = get_heap_object(addr, false);
+    if (ref)
+      ref->refs_from.push_back(obj);
+  }
+}
+
+static void
+build_back_references() {
+  for (ruby_heap_map_t::const_iterator it = heap_map_.begin();
+       it != heap_map_.end();
+       ++it) {
+    add_inverse_obj_references(it->second);
+  }
+  for (ruby_heap_obj_list_t::const_iterator it = root_objects.begin();
+       it != root_objects.end();
+       ++it) {
+    add_inverse_obj_references(*it);
+  }
 }
 
 static void
@@ -329,7 +352,7 @@ parse_root_object(json_t *root_o) {
   gc_root->flags = RUBY_T_ROOT;
   gc_root->as.root.name = get_string(json_string_value(name_o));
   root_objects.push_back(gc_root);
-  build_obj_references(gc_root, json_object_get(root_o, "references"));
+  parse_obj_references(gc_root, json_object_get(root_o, "references"));
 }
 
 static void
@@ -391,7 +414,7 @@ parse_heap_object(json_t *heap_o, uint32_t type) {
   }
   obj->as.obj.memsize += kRubyObjectSize;
 
-  build_obj_references(obj, json_object_get(heap_o, "references"));
+  parse_obj_references(obj, json_object_get(heap_o, "references"));
 }
 
 static void
@@ -429,6 +452,9 @@ parse_file(const char *filename) {
     if (i % 100000 == 0) { printf("."); }
   }
   printf(" done: %i heap objects\n", i);
+  printf("building back references ..");
+  build_back_references();
+  printf(" done\n");
 }
 
 static const char *
