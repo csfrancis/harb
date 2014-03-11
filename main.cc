@@ -78,7 +78,7 @@ typedef list<struct ruby_heap_obj *> ruby_heap_obj_list_t;
 
 typedef struct ruby_heap_obj {
   uint32_t flags;
-  struct ruby_heap_obj **refs_to;
+  uint64_t *refs_to;
   ruby_heap_obj_list_t refs_from;
 
   union {
@@ -304,19 +304,20 @@ build_obj_references(ruby_heap_obj_t *obj, json_t *refs_array) {
   }
 
   uint32_t i;
-  obj->refs_to = new ruby_heap_obj_t*[size + 1];
+  obj->refs_to = new uint64_t[size + 1];
   for (i = 0; i < size; ++i) {
     json_t *child_o = json_array_get(refs_array, i);
     assert(child_o);
     assert(json_typeof(child_o) == JSON_STRING);
     uint64_t child_addr = strtoull(json_string_value(child_o), NULL, 0);
     assert(child_addr != 0);
+    obj->refs_to[i] = child_addr;
+
     ruby_heap_obj_t *child = get_heap_object(child_addr, true);
     assert(child);
     child->refs_from.push_front(obj);
-    obj->refs_to[i] = child;
   }
-  obj->refs_to[i] = NULL;
+  obj->refs_to[i] = 0;
 }
 
 static void
@@ -512,8 +513,13 @@ print_object(ruby_heap_obj_t *obj) {
     printf("%18s: %zu\n", "size", obj->as.obj.memsize);
     if (obj->refs_to) {
       printf("%18s: [\n", "references to");
-      for (uint32_t i = 0; obj->refs_to[i] != NULL; ++i) {
-        print_ref_object(obj->refs_to[i]);
+      for (uint32_t i = 0; obj->refs_to[i]; ++i) {
+        ruby_heap_obj_t *ref_obj = get_heap_object(obj->refs_to[i], false);
+        if (ref_obj) {
+          print_ref_object(ref_obj);
+        } else {
+          printf("%20s  0x%" PRIx64 " missing\n", "", obj->refs_to[i]);
+        }
       }
       printf("%18s  ]\n", "");
     }
