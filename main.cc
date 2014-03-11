@@ -115,12 +115,12 @@ typedef CityHasher<const char *> CityHasherString;
 typedef sparse_hash_set<const char *, CityHasherString, eqstr> string_set_t;
 typedef sparse_hash_map<uint64_t, struct ruby_heap_obj *> ruby_heap_map_t;
 
-static const uint64_t kRootAddr = 0;
 static const size_t kRubyObjectSize = 40;
 
 bool exit_ = false;
 string_set_t intern_strings_;
 ruby_heap_map_t heap_map_;
+ruby_heap_obj_list_t root_objects;
 
 static void
 fatal_error(const char *fmt, ...) {
@@ -291,8 +291,6 @@ get_heap_object_type_string(uint32_t type) {
   return "NONE";
 }
 
-static const size_t kMaxRoots = 16;
-
 static void
 build_obj_references(ruby_heap_obj_t *obj, json_t *refs_array) {
   if (!refs_array) {
@@ -327,20 +325,11 @@ parse_root_object(json_t *root_o) {
   json_t *name_o = json_object_get(root_o, "root");
   assert(name_o);
 
-  ruby_heap_obj_t *root = heap_map_[kRootAddr];
   ruby_heap_obj_t *gc_root = create_heap_object();
   gc_root->flags = RUBY_T_ROOT;
   gc_root->as.root.name = get_string(json_string_value(name_o));
-  gc_root->refs_from.push_front(root);
+  root_objects.push_back(gc_root)
   build_obj_references(gc_root, json_object_get(root_o, "references"));
-
-  for (i = 0; i < kMaxRoots; ++i) {
-    if (root->refs_to[i] == NULL) {
-      root->refs_to[i] = gc_root;
-      break;
-    }
-  }
-  assert(i != kMaxRoots);
 }
 
 static void
@@ -413,11 +402,6 @@ parse_file(const char *filename) {
   if (!f) {
     fatal_error("unable to open %s: %d\n", filename, errno);
   }
-
-  ruby_heap_obj_t *root = create_heap_object();
-  root->refs_to = new ruby_heap_obj_t*[kMaxRoots];
-  memset(root->refs_to, 0, sizeof(ruby_heap_obj_t) * kMaxRoots);
-  heap_map_[kRootAddr] = root;
 
   printf("parsing %s .", filename);
 
@@ -624,7 +608,6 @@ cmd_rootpath(const char *args) {
   }
 
   ruby_heap_obj_t *cur;
-  ruby_heap_obj_t *root = heap_map_[kRootAddr];
   deque<ruby_heap_obj_t *> q;
   sparse_hash_set<ruby_heap_obj_t *> visited;
   sparse_hash_map<ruby_heap_obj_t *, ruby_heap_obj_t *> parent;
@@ -632,22 +615,22 @@ cmd_rootpath(const char *args) {
   q.push_back(obj);
   visited.insert(obj);
 
-  while (!q.empty()) {
+  while (!q.empty() && !found) {
     cur = q.front();
     q.pop_front();
-
-    if (cur == root) {
-      found = true;
-      break;
-    }
 
     for (ruby_heap_obj_list_t::const_iterator it = cur->refs_from.begin();
          it != cur->refs_from.end();
          ++it) {
       if (visited.find(*it) == visited.end()) {
         visited.insert(*it);
-        q.push_back(*it);
         parent[*it] = cur;
+        if (is_root_object(*it)) {
+          cur = *it;
+          found = true;
+          break;
+        }
+        q.push_back(*it);
       }
     }
   }
@@ -658,11 +641,8 @@ cmd_rootpath(const char *args) {
   }
 
   printf("\nroot path to 0x%" PRIx64 ":\n", obj->as.obj.addr);
-  cur = root;
   while (cur != NULL) {
-    if (cur != root) {
-      print_ref_object(cur);
-    }
+    print_ref_object(cur);
     cur = parent[cur];
   }
   printf("\n");
