@@ -118,6 +118,7 @@ typedef sparse_hash_map<uint64_t, struct ruby_heap_obj *> ruby_heap_map_t;
 static const size_t kRubyObjectSize = 40;
 
 bool exit_ = false;
+bool show_progress;
 string_set_t intern_strings_;
 ruby_heap_map_t heap_map_;
 ruby_heap_obj_list_t root_objects;
@@ -342,15 +343,18 @@ class Progress {
 
   void complete() {
     update(total);
-    printf("\n");
+    if (show_progress)
+      printf("\n");
   }
 
   void print() {
-    printf("\r%s (%d%%)", message, percentage);
+    if (show_progress)
+      printf("\r%s (%d%%)", message, percentage);
   }
 
   void clear() {
-    printf("\r%*s\r", (int)strlen(message) + 7, "");
+    if (show_progress)
+      printf("\r%*s\r", (int)strlen(message) + 7, "");
   }
 
   void increment(uint64_t amount=1) {
@@ -772,6 +776,8 @@ static void execute_command(char *line) {
 int
 main(int argc, char **argv) {
   char *line;
+
+  show_progress = isatty(STDOUT_FILENO) == 1;
 
   setvbuf(stdout, NULL, _IONBF, 0);
 
