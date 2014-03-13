@@ -118,6 +118,7 @@ typedef sparse_hash_map<uint64_t, struct ruby_heap_obj *> ruby_heap_map_t;
 static const size_t kRubyObjectSize = 40;
 
 bool exit_ = false;
+bool show_progress;
 string_set_t intern_strings_;
 ruby_heap_map_t heap_map_;
 ruby_heap_obj_list_t root_objects;
@@ -326,18 +327,68 @@ add_inverse_obj_references(ruby_heap_obj_t *obj) {
   }
 }
 
+class Progress {
+  uint64_t current, total;
+  int percentage;
+  const char *message;
+
+  public:
+
+  Progress(const char *message, uint64_t total) : current(0), total(total),
+                                                  percentage(-1), message(message) {}
+
+  void start() {
+    update(0);
+  }
+
+  void complete() {
+    update(total);
+    if (show_progress)
+      printf("\n");
+  }
+
+  void print() {
+    if (show_progress)
+      printf("\r%s (%d%%)", message, percentage);
+  }
+
+  void clear() {
+    if (show_progress)
+      printf("\r%*s\r", (int)strlen(message) + 7, "");
+  }
+
+  void increment(uint64_t amount=1) {
+    update(current + amount);
+  }
+
+  void update(uint64_t progress) {
+    this->current = progress;
+    uint64_t new_percentage = (progress * 100) / total;
+    if (percentage != new_percentage) {
+      this->percentage = new_percentage;
+      print();
+    }
+  }
+};
+
 static void
 build_back_references() {
+  size_t num_heap_objects = heap_map_.size();
+  Progress progress("building back references", num_heap_objects + root_objects.size());
+  progress.start();
   for (ruby_heap_map_t::const_iterator it = heap_map_.begin();
        it != heap_map_.end();
        ++it) {
     add_inverse_obj_references(it->second);
+    progress.increment();
   }
   for (ruby_heap_obj_list_t::const_iterator it = root_objects.begin();
        it != root_objects.end();
        ++it) {
     add_inverse_obj_references(*it);
+    progress.increment();
   }
+  progress.complete();
 }
 
 static ruby_heap_obj_t *
@@ -440,30 +491,24 @@ read_heap_object(FILE *f) {
 }
 
 static void
-parse_file(const char *filename) {
-  int i;
+parse_heap_dump(FILE *f) {
+  fseeko(f, 0, SEEK_END);
+  Progress progress("parsing", ftello(f));
+  fseeko(f, 0, SEEK_SET);
+  progress.start();
 
-  FILE *f = fopen(filename, "r");
-  if (!f) {
-    fatal_error("unable to open %s: %d\n", filename, errno);
-  }
-
-  printf("parsing %s .", filename);
-
-  ruby_heap_obj_t *obj = read_heap_object(f);
-  for (i = 0; obj != NULL; obj = read_heap_object(f), ++i) {
+  ruby_heap_obj_t *obj;
+  while ((obj = read_heap_object(f)) != NULL) {
     if (is_root_object(obj)) {
       root_objects.push_back(obj);
     } else {
       heap_map_[obj->as.obj.addr] = obj;
     }
 
-    if (i % 100000 == 0) { printf("."); }
+    progress.update(ftello(f));
   }
-  printf(" done: %i heap objects\n", i);
-  printf("building back references ..");
+  progress.complete();
   build_back_references();
-  printf(" done\n");
 }
 
 static const char *
@@ -732,6 +777,8 @@ int
 main(int argc, char **argv) {
   char *line;
 
+  show_progress = isatty(STDOUT_FILENO) == 1;
+
   setvbuf(stdout, NULL, _IONBF, 0);
 
   if (argc < 2) {
@@ -739,7 +786,12 @@ main(int argc, char **argv) {
     return -1;
   }
 
-  parse_file(argv[1]);
+  const char *heap_filename = argv[1];
+  FILE *heap_file = fopen(heap_filename, "r");
+  if (!heap_file) {
+    fatal_error("unable to open %s: %d\n", heap_filename, errno);
+  }
+  parse_heap_dump(heap_file);
 
   while (!exit_) {
     line = readline("harb> ");
