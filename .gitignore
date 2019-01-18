@@ -1,3 +1,4 @@
 harb
 *.o
 *.json
+harb_diff-*

@@ -470,7 +470,9 @@ parse_heap_object(json_t *heap_o, uint32_t type) {
 }
 
 static ruby_heap_obj_t *
-read_heap_object(FILE *f) {
+read_heap_object(FILE *f, json_t **json_obj) {
+  if (json_obj) *json_obj = NULL;
+
   json_t *o = json_loadf(f, JSON_DISABLE_EOF_CHECK | JSON_ALLOW_NUL, NULL);
   if (o == NULL) {
     return NULL;
@@ -489,7 +491,11 @@ read_heap_object(FILE *f) {
     heap_obj = parse_heap_object(o, type);
   }
 
-  json_decref(o);
+  if (!json_obj) {
+    json_decref(o);
+  } else {
+    *json_obj = o;
+  }
   return heap_obj;
 }
 
@@ -501,7 +507,7 @@ parse_heap_dump(FILE *f) {
   progress.start();
 
   ruby_heap_obj_t *obj;
-  while ((obj = read_heap_object(f)) != NULL) {
+  while ((obj = read_heap_object(f, NULL)) != NULL) {
     if (is_root_object(obj)) {
       root_objects.push_back(obj);
     } else {
@@ -633,13 +639,15 @@ static void cmd_help(const char *);
 static void cmd_print(const char *);
 static void cmd_rootpath(const char *);
 static void cmd_summary(const char *);
+static void cmd_diff(const char *);
 
 command_t commands_[] = {
+  { "quit", cmd_quit, "Exits the program" },
   { "print", cmd_print, "Prints heap info for the address specified" },
   { "rootpath", cmd_rootpath, "Display the root path for the object specified" },
   { "help", cmd_help, "Displays this message"},
-  { "quit", cmd_quit, "Exits the program" },
   { "summary", cmd_summary, "Display a heap dump summary" },
+  { "diff", cmd_diff, "Diff current heap dump with specifed dump" },
   { NULL, NULL, NULL }
 };
 
@@ -684,6 +692,47 @@ cmd_help(const char *) {
     printf("\t%10s - %s\n", commands_[i].name, commands_[i].help);
   }
   printf("\n");
+}
+
+static void
+cmd_diff(const char *args) {
+  if (args == NULL || strlen(args) == 0) {
+    printf("error: you must specify a heap dump file\n");
+    return;
+  }
+
+  FILE *f = fopen(args, "r");
+  if (!f) {
+    printf("unable to open %s: %d\n", args, errno);
+    return;
+  }
+
+  char template_name[] = "harb_diff-XXXXXX";
+  int fd = mkstemp(template_name);
+  if (fd == -1) {
+    printf("unable to create tempfile: %d\n", errno);
+    return;
+  }
+
+  FILE *out = fdopen(fd, "w");
+  if (!out) {
+    printf("unable to open temp fd: %d", errno);
+    return;
+  }
+
+  ruby_heap_obj_t *obj = NULL;
+  json_t *json_obj = NULL;
+  while ((obj = read_heap_object(f, &json_obj)) != NULL) {
+    if (!is_root_object(obj) && heap_map_[obj->as.obj.addr] == NULL) {
+      char *s = json_dumps(json_obj, 0);
+      fprintf(out, "%s\n", s);
+      free(s);
+    }
+    json_decref(json_obj);
+  }
+
+  fclose(out);
+  fclose(f);
 }
 
 static ruby_heap_obj_t *
