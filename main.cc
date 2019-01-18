@@ -6,6 +6,8 @@
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/errno.h>
+#include <unistd.h>
+#include <locale.h>
 
 #include <readline/readline.h>
 #include <readline/history.h>
@@ -122,6 +124,7 @@ bool show_progress;
 string_set_t intern_strings_;
 ruby_heap_map_t heap_map_;
 ruby_heap_obj_list_t root_objects;
+FILE *out_ = stdout;
 
 static void
 fatal_error(const char *fmt, ...) {
@@ -629,14 +632,45 @@ static void cmd_quit(const char *);
 static void cmd_help(const char *);
 static void cmd_print(const char *);
 static void cmd_rootpath(const char *);
+static void cmd_summary(const char *);
 
 command_t commands_[] = {
   { "print", cmd_print, "Prints heap info for the address specified" },
   { "rootpath", cmd_rootpath, "Display the root path for the object specified" },
   { "help", cmd_help, "Displays this message"},
   { "quit", cmd_quit, "Exits the program" },
+  { "summary", cmd_summary, "Display a heap dump summary" },
   { NULL, NULL, NULL }
 };
+
+static void
+cmd_summary(const char *) {
+  typedef sparse_hash_map<uint32_t, size_t> type_map_t;
+  type_map_t type_map;
+  size_t total_size = 0;
+  size_t num_heap_objects = heap_map_.size();
+  for (ruby_heap_map_t::const_iterator it = heap_map_.begin();
+       it != heap_map_.end();
+       ++it) {
+    ruby_heap_obj *obj = it->second;
+    total_size += obj->as.obj.memsize;
+
+    uint32_t type = obj->flags & RUBY_T_MASK;
+    if (type_map[type]) {
+      type_map[type] += obj->as.obj.memsize;
+    } else {
+      type_map[type] = obj->as.obj.memsize;
+    }
+  }
+  fprintf(out_, "total objects: %'zu\n", num_heap_objects);
+  fprintf(out_, "total heap memsize: %'zu bytes\n", total_size);
+  for (type_map_t:: const_iterator it = type_map.begin();
+       it != type_map.end();
+       ++it) {
+    fprintf(out_, "  %s: %'zu bytes\n", get_heap_object_type_string(it->first),
+        it->second);
+  }
+}
 
 static void
 cmd_quit(const char *) {
@@ -777,6 +811,7 @@ int
 main(int argc, char **argv) {
   char *line;
 
+  setlocale(LC_ALL, "");
   show_progress = isatty(STDOUT_FILENO) == 1;
 
   setvbuf(stdout, NULL, _IONBF, 0);
