@@ -71,7 +71,8 @@ enum ruby_flag_types {
     RUBY_FL_FSTRING         = 0x80,
     RUBY_FL_GC_WB_PROTECTED = 0x100,
     RUBY_FL_GC_OLD          = 0x200,
-    RUBY_FL_GC_MARKED       = 0x400
+    RUBY_FL_GC_MARKED       = 0x400,
+    RUBY_FL_SHARED          = 0x800
 };
 
 struct ruby_heap_obj;
@@ -406,6 +407,21 @@ parse_root_object(json_t *root_o) {
   return gc_root;
 }
 
+static uint32_t
+parse_flags(json_t *heap_o, uint32_t type) {
+  uint32_t flags = type;
+
+  if (json_object_get(heap_o, "frozen") == json_true()) {
+    flags |= RUBY_FL_FROZEN;
+  }
+
+  if (json_object_get(heap_o, "shared") == json_true()) {
+    flags |= RUBY_FL_SHARED;
+  }
+
+  return flags;
+}
+
 static ruby_heap_obj_t *
 parse_heap_object(json_t *heap_o, uint32_t type) {
   json_t *addr_o = json_object_get(heap_o, "address");
@@ -418,7 +434,7 @@ parse_heap_object(json_t *heap_o, uint32_t type) {
   uint64_t addr = strtoull(addr_s, NULL, 0);
   assert(addr != 0);
   ruby_heap_obj_t *obj = create_heap_object(addr);
-  obj->flags = type;
+  obj->flags = parse_flags(heap_o, type);
 
   if (type == RUBY_T_STRING) {
     json_t *value_o = json_object_get(heap_o, "value");
@@ -535,6 +551,9 @@ print_object_summary(ruby_heap_obj_t *obj, char *buf, size_t buf_sz) {
     ruby_heap_obj_t *clazz = heap_map_[obj->as.obj.class_addr];
     assert(clazz);
     value_bufp = clazz->as.obj.as.value;
+  } else if (type == RUBY_T_STRING && obj->flags & RUBY_FL_SHARED) {
+    ruby_heap_obj_t *ref_string = get_heap_object(obj->refs_to[0]);
+    value_bufp = ref_string->as.obj.as.value;
   } else {
     value_bufp = obj->as.obj.as.value;
   }
@@ -599,7 +618,17 @@ print_object(ruby_heap_obj_t *obj) {
         p,
         type == RUBY_T_STRING ? "\"" : "");
     }
+
     printf("%18s: %zu\n", "size", obj->as.obj.memsize);
+
+    if (obj->flags & RUBY_FL_SHARED) {
+      printf("%18s: %s\n", "shared", "true");
+    }
+
+    if (obj->flags & RUBY_FL_FROZEN) {
+      printf("%18s: %s\n", "frozen", "true");
+    }
+
     if (obj->refs_to) {
       printf("%18s: [\n", "references to");
       for (uint32_t i = 0; obj->refs_to[i]; ++i) {
