@@ -82,7 +82,7 @@ typedef vector<uint64_t> ruby_heap_addr_list_t;
 
 typedef struct ruby_heap_obj {
   uint32_t flags;
-  ruby_heap_addr_list_t refs_to;
+  uint64_t *refs_to;
   ruby_heap_obj_list_t refs_from;
 
   union {
@@ -142,7 +142,6 @@ fatal_error(const char *fmt, ...) {
 static ruby_heap_obj_t *
 create_heap_object() {
   ruby_heap_obj_t *obj = new ruby_heap_obj_t();
-  new (&obj->refs_to) ruby_heap_addr_list_t();
   new (&obj->refs_from) ruby_heap_obj_list_t();
   return obj;
 }
@@ -300,28 +299,34 @@ parse_obj_references(ruby_heap_obj_t *obj, json_t *refs_array) {
     return;
   }
   assert(json_typeof(refs_array) == JSON_ARRAY);
+  assert(obj->refs_to == NULL);
   size_t size = json_array_size(refs_array);
   if (size == 0) {
     return;
   }
 
   uint32_t i;
+  obj->refs_to = new uint64_t[size + 1];
   for (i = 0; i < size; ++i) {
     json_t *child_o = json_array_get(refs_array, i);
     assert(child_o);
     assert(json_typeof(child_o) == JSON_STRING);
     uint64_t child_addr = strtoull(json_string_value(child_o), NULL, 0);
     assert(child_addr != 0);
-    obj->refs_to.push_back(child_addr);
+    obj->refs_to[i] = child_addr;
 
   }
-  obj->refs_to.shrink_to_fit();
+  obj->refs_to[i] = 0;
 }
 
 static void
 add_inverse_obj_references(ruby_heap_obj_t *obj) {
-  for (auto it = obj->refs_to.cbegin(); it != obj->refs_to.cend(); ++it) {
-    ruby_heap_obj_t *ref = get_heap_object(*it);
+  uint64_t *ref_ptr = obj->refs_to;
+  if (!ref_ptr) {
+    return;
+  }
+  while (uint64_t addr = *ref_ptr++) {
+    ruby_heap_obj_t *ref = get_heap_object(addr);
     if (ref) {
       ref->refs_from.push_back(obj);
     }
@@ -549,7 +554,7 @@ print_object_summary(ruby_heap_obj_t *obj, char *buf, size_t buf_sz) {
     assert(clazz);
     value_bufp = clazz->as.obj.as.value;
   } else if (type == RUBY_T_STRING && obj->flags & RUBY_FL_SHARED) {
-    ruby_heap_obj_t *ref_string = get_heap_object(obj->refs_to.front());
+    ruby_heap_obj_t *ref_string = get_heap_object(obj->refs_to[0]);
     value_bufp = ref_string->as.obj.as.value;
   } else {
     value_bufp = obj->as.obj.as.value;
@@ -626,14 +631,14 @@ print_object(ruby_heap_obj_t *obj) {
       printf("%18s: %s\n", "frozen", "true");
     }
 
-    if (!obj->refs_to.empty()) {
+    if (obj->refs_to) {
       printf("%18s: [\n", "references to");
-      for (auto it = obj->refs_to.cbegin(); it != obj->refs_to.cend(); ++it) {
-        ruby_heap_obj_t *ref_obj = get_heap_object(*it);
+      for (uint32_t i = 0; obj->refs_to[i]; ++i) {
+        ruby_heap_obj_t *ref_obj = get_heap_object(obj->refs_to[i]);
         if (ref_obj) {
           print_ref_object(ref_obj);
         } else {
-          printf("%20s  0x%" PRIx64 " missing\n", "", *it);
+          printf("%20s  0x%" PRIx64 " missing\n", "", obj->refs_to[i]);
         }
       }
       printf("%18s  ]\n", "");
