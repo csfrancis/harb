@@ -14,8 +14,8 @@
 
 #include <jansson.h>
 
-#include <list>
 #include <deque>
+#include <vector>
 
 #include <city.h>
 
@@ -77,11 +77,12 @@ enum ruby_flag_types {
 
 struct ruby_heap_obj;
 
-typedef list<struct ruby_heap_obj *> ruby_heap_obj_list_t;
+typedef vector<struct ruby_heap_obj *> ruby_heap_obj_list_t;
+typedef vector<uint64_t> ruby_heap_addr_list_t;
 
 typedef struct ruby_heap_obj {
   uint32_t flags;
-  uint64_t *refs_to;
+  ruby_heap_addr_list_t refs_to;
   ruby_heap_obj_list_t refs_from;
 
   union {
@@ -125,6 +126,7 @@ bool show_progress;
 string_set_t intern_strings_;
 ruby_heap_map_t heap_map_;
 ruby_heap_obj_list_t root_objects;
+ruby_heap_obj_t *root_;
 FILE *out_ = stdout;
 
 static void
@@ -140,7 +142,8 @@ fatal_error(const char *fmt, ...) {
 static ruby_heap_obj_t *
 create_heap_object() {
   ruby_heap_obj_t *obj = new ruby_heap_obj_t();
-  new (&obj->refs_from) list<struct ruby_heap_obj *>();
+  new (&obj->refs_to) ruby_heap_addr_list_t();
+  new (&obj->refs_from) ruby_heap_obj_list_t();
   return obj;
 }
 
@@ -153,7 +156,7 @@ create_heap_object(uint64_t addr) {
 
 static ruby_heap_obj_t *
 get_heap_object(uint64_t addr) {
-  ruby_heap_map_t::const_iterator it = heap_map_.find(addr);
+  auto it = heap_map_.find(addr);
   if (it == heap_map_.end()) {
     return NULL;
   }
@@ -168,7 +171,7 @@ is_root_object(ruby_heap_obj_t *obj) {
 static const char *
 get_string(const char *str) {
   assert(str);
-  string_set_t::const_iterator it = intern_strings_.find(str);
+  auto it = intern_strings_.find(str);
   if (it != intern_strings_.end()) {
     return *it;
   }
@@ -297,38 +300,33 @@ parse_obj_references(ruby_heap_obj_t *obj, json_t *refs_array) {
     return;
   }
   assert(json_typeof(refs_array) == JSON_ARRAY);
-  assert(obj->refs_to == NULL);
   size_t size = json_array_size(refs_array);
   if (size == 0) {
     return;
   }
 
   uint32_t i;
-  obj->refs_to = new uint64_t[size + 1];
   for (i = 0; i < size; ++i) {
     json_t *child_o = json_array_get(refs_array, i);
     assert(child_o);
     assert(json_typeof(child_o) == JSON_STRING);
     uint64_t child_addr = strtoull(json_string_value(child_o), NULL, 0);
     assert(child_addr != 0);
-    obj->refs_to[i] = child_addr;
+    obj->refs_to.push_back(child_addr);
 
   }
-  obj->refs_to[i] = 0;
+  obj->refs_to.shrink_to_fit();
 }
 
 static void
 add_inverse_obj_references(ruby_heap_obj_t *obj) {
-  uint64_t *ref_ptr = obj->refs_to;
-  if (!ref_ptr) {
-    return;
-  }
-  while (uint64_t addr = *ref_ptr++) {
-    ruby_heap_obj_t *ref = get_heap_object(addr);
+  for (auto it = obj->refs_to.cbegin(); it != obj->refs_to.cend(); ++it) {
+    ruby_heap_obj_t *ref = get_heap_object(*it);
     if (ref) {
       ref->refs_from.push_back(obj);
     }
   }
+  obj->refs_from.shrink_to_fit();
 }
 
 class Progress {
@@ -367,7 +365,7 @@ class Progress {
 
   void update(uint64_t progress) {
     this->current = progress;
-    uint64_t new_percentage = (progress * 100) / total;
+    int new_percentage = (progress * 100) / total;
     if (percentage != new_percentage) {
       this->percentage = new_percentage;
       print();
@@ -380,15 +378,11 @@ build_back_references() {
   size_t num_heap_objects = heap_map_.size();
   Progress progress("building back references", num_heap_objects + root_objects.size());
   progress.start();
-  for (ruby_heap_map_t::const_iterator it = heap_map_.begin();
-       it != heap_map_.end();
-       ++it) {
+  for (auto it = heap_map_.begin(); it != heap_map_.end(); ++it) {
     add_inverse_obj_references(it->second);
     progress.increment();
   }
-  for (ruby_heap_obj_list_t::const_iterator it = root_objects.begin();
-       it != root_objects.end();
-       ++it) {
+  for (auto it = root_objects.begin(); it != root_objects.end(); ++it) {
     add_inverse_obj_references(*it);
     progress.increment();
   }
@@ -522,6 +516,9 @@ parse_heap_dump(FILE *f) {
   fseeko(f, 0, SEEK_SET);
   progress.start();
 
+  root_ = create_heap_object();
+  root_->flags = RUBY_T_ROOT;
+
   ruby_heap_obj_t *obj;
   while ((obj = read_heap_object(f, NULL)) != NULL) {
     if (is_root_object(obj)) {
@@ -552,7 +549,7 @@ print_object_summary(ruby_heap_obj_t *obj, char *buf, size_t buf_sz) {
     assert(clazz);
     value_bufp = clazz->as.obj.as.value;
   } else if (type == RUBY_T_STRING && obj->flags & RUBY_FL_SHARED) {
-    ruby_heap_obj_t *ref_string = get_heap_object(obj->refs_to[0]);
+    ruby_heap_obj_t *ref_string = get_heap_object(obj->refs_to.front());
     value_bufp = ref_string->as.obj.as.value;
   } else {
     value_bufp = obj->as.obj.as.value;
@@ -629,23 +626,21 @@ print_object(ruby_heap_obj_t *obj) {
       printf("%18s: %s\n", "frozen", "true");
     }
 
-    if (obj->refs_to) {
+    if (!obj->refs_to.empty()) {
       printf("%18s: [\n", "references to");
-      for (uint32_t i = 0; obj->refs_to[i]; ++i) {
-        ruby_heap_obj_t *ref_obj = get_heap_object(obj->refs_to[i]);
+      for (auto it = obj->refs_to.cbegin(); it != obj->refs_to.cend(); ++it) {
+        ruby_heap_obj_t *ref_obj = get_heap_object(*it);
         if (ref_obj) {
           print_ref_object(ref_obj);
         } else {
-          printf("%20s  0x%" PRIx64 " missing\n", "", obj->refs_to[i]);
+          printf("%20s  0x%" PRIx64 " missing\n", "", *it);
         }
       }
       printf("%18s  ]\n", "");
     }
     if (obj->refs_from.size() > 0) {
       printf("%18s: [\n", "referenced from");
-      for (ruby_heap_obj_list_t::const_iterator it = obj->refs_from.begin();
-           it != obj->refs_from.end();
-           ++it) {
+      for (auto it = obj->refs_from.begin(); it != obj->refs_from.end(); ++it) {
         print_ref_object(*it);
       }
       printf("%18s  ]\n", "");
@@ -686,9 +681,7 @@ cmd_summary(const char *) {
   type_map_t type_map;
   size_t total_size = 0;
   size_t num_heap_objects = heap_map_.size();
-  for (ruby_heap_map_t::const_iterator it = heap_map_.begin();
-       it != heap_map_.end();
-       ++it) {
+  for (auto it = heap_map_.begin(); it != heap_map_.end(); ++it) {
     ruby_heap_obj *obj = it->second;
     total_size += obj->as.obj.memsize;
 
@@ -701,9 +694,7 @@ cmd_summary(const char *) {
   }
   fprintf(out_, "total objects: %'zu\n", num_heap_objects);
   fprintf(out_, "total heap memsize: %'zu bytes\n", total_size);
-  for (type_map_t:: const_iterator it = type_map.begin();
-       it != type_map.end();
-       ++it) {
+  for (auto it = type_map.begin(); it != type_map.end(); ++it) {
     fprintf(out_, "  %s: %'zu bytes\n", get_heap_object_type_string(it->first),
         it->second);
   }
@@ -816,9 +807,7 @@ cmd_rootpath(const char *args) {
     cur = q.front();
     q.pop_front();
 
-    for (ruby_heap_obj_list_t::const_iterator it = cur->refs_from.begin();
-         it != cur->refs_from.end();
-         ++it) {
+    for (auto it = cur->refs_from.begin(); it != cur->refs_from.end(); ++it) {
       if (visited.find(*it) == visited.end()) {
         visited.insert(*it);
         parent[*it] = cur;
