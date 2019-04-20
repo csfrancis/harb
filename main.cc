@@ -22,6 +22,9 @@
 #include <sparsehash/sparse_hash_map>
 #include <sparsehash/sparse_hash_set>
 
+#define likely(x)      __builtin_expect(!!(x), 1)
+#define unlikely(x)    __builtin_expect(!!(x), 0)
+
 ///////////////////////////////////////////////////////////////////////////////
 // Ruby heap management
 ///////////////////////////////////////////////////////////////////////////////
@@ -55,6 +58,7 @@ enum ruby_value_type {
     RUBY_T_SYMBOL = 0x14,
     RUBY_T_FIXNUM = 0x15,
 
+    RUBY_T_IMEMO  = 0x1a,
     RUBY_T_UNDEF  = 0x1b,
     RUBY_T_NODE   = 0x1c,
     RUBY_T_ICLASS = 0x1d,
@@ -82,6 +86,7 @@ typedef vector<uint64_t> ruby_heap_addr_list_t;
 
 typedef struct ruby_heap_obj {
   uint32_t flags;
+  uint32_t idx; // unique node index
   uint64_t *refs_to;
   ruby_heap_obj_list_t refs_from;
 
@@ -97,6 +102,7 @@ typedef struct ruby_heap_obj {
   } obj;
   struct {
     const char *name;
+    ruby_heap_obj_list_t *children; // only used by the root_ object
   } root;
   } as;
 } ruby_heap_obj_t;
@@ -119,14 +125,15 @@ typedef CityHasher<const char *> CityHasherString;
 typedef sparse_hash_set<const char *, CityHasherString, eqstr> string_set_t;
 typedef sparse_hash_map<uint64_t, struct ruby_heap_obj *> ruby_heap_map_t;
 
-static const size_t kRubyObjectSize = 40;
+class dominator_tree;
 
 bool exit_ = false;
 bool show_progress;
 string_set_t intern_strings_;
 ruby_heap_map_t heap_map_;
-ruby_heap_obj_list_t root_objects;
 ruby_heap_obj_t *root_;
+dominator_tree *dominator_tree_;
+int32_t heap_obj_count_;
 FILE *out_ = stdout;
 
 static void
@@ -142,6 +149,7 @@ fatal_error(const char *fmt, ...) {
 static ruby_heap_obj_t *
 create_heap_object() {
   ruby_heap_obj_t *obj = new ruby_heap_obj_t();
+  obj->idx = ++heap_obj_count_;
   new (&obj->refs_from) ruby_heap_obj_list_t();
   return obj;
 }
@@ -232,6 +240,8 @@ get_heap_object_type(const char *type) {
     return RUBY_T_ZOMBIE;
   } else if (strcmp(type, "ROOT") == 0) {
     return RUBY_T_ROOT;
+  } else if (strcmp(type, "IMEMO") == 0) {
+    return RUBY_T_IMEMO;
   }
   return RUBY_T_NONE;
 }
@@ -289,6 +299,8 @@ get_heap_object_type_string(uint32_t type) {
     return "ZOMBIE";
   } else if (t == RUBY_T_ROOT) {
     return "ROOT";
+  } else if (t == RUBY_T_IMEMO) {
+    return "IMEMO";
   }
   return "NONE";
 }
@@ -314,7 +326,6 @@ parse_obj_references(ruby_heap_obj_t *obj, json_t *refs_array) {
     uint64_t child_addr = strtoull(json_string_value(child_o), NULL, 0);
     assert(child_addr != 0);
     obj->refs_to[i] = child_addr;
-
   }
   obj->refs_to[i] = 0;
 }
@@ -381,13 +392,14 @@ class Progress {
 static void
 build_back_references() {
   size_t num_heap_objects = heap_map_.size();
-  Progress progress("building back references", num_heap_objects + root_objects.size());
+  ruby_heap_obj_list_t *roots = root_->as.root.children;
+  Progress progress("building back references", num_heap_objects + roots->size());
   progress.start();
   for (auto it = heap_map_.begin(); it != heap_map_.end(); ++it) {
     add_inverse_obj_references(it->second);
     progress.increment();
   }
-  for (auto it = root_objects.begin(); it != root_objects.end(); ++it) {
+  for (auto it = roots->begin(); it != roots->end(); ++it) {
     add_inverse_obj_references(*it);
     progress.increment();
   }
@@ -471,6 +483,12 @@ parse_heap_object(json_t *heap_o, uint32_t type) {
       assert(json_typeof(length_o) == JSON_INTEGER);
       obj->as.obj.as.size = json_integer_value(length_o);
     }
+  } else if (type == RUBY_T_IMEMO) {
+    json_t *name_o = json_object_get(heap_o, "imemo_type");
+    if (name_o) {
+      assert(json_typeof(name_o) == JSON_STRING);
+      obj->as.obj.as.value = get_string(json_string_value(name_o));
+    }
   }
 
   json_t * memsize_o = json_object_get(heap_o, "memsize");
@@ -478,7 +496,6 @@ parse_heap_object(json_t *heap_o, uint32_t type) {
     assert(json_typeof(memsize_o) == JSON_INTEGER);
     obj->as.obj.memsize = json_integer_value(memsize_o);
   }
-  obj->as.obj.memsize += kRubyObjectSize;
 
   parse_obj_references(obj, json_object_get(heap_o, "references"));
   return obj;
@@ -523,11 +540,12 @@ parse_heap_dump(FILE *f) {
 
   root_ = create_heap_object();
   root_->flags = RUBY_T_ROOT;
+  root_->as.root.children = new ruby_heap_obj_list_t();
 
   ruby_heap_obj_t *obj;
   while ((obj = read_heap_object(f, NULL)) != NULL) {
     if (is_root_object(obj)) {
-      root_objects.push_back(obj);
+      root_->as.root.children->push_back(obj);
     } else {
       heap_map_[obj->as.obj.addr] = obj;
     }
@@ -536,6 +554,228 @@ parse_heap_dump(FILE *f) {
   }
   progress.complete();
   build_back_references();
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// Dominator Tree
+///////////////////////////////////////////////////////////////////////////////
+
+class dominator_tree {
+  public:
+    dominator_tree(ruby_heap_obj_t *root, int32_t num_nodes);
+    ~dominator_tree();
+
+    void calculate();
+    void retained_size(ruby_heap_obj_t *obj, size_t &size);
+
+  private:
+    ruby_heap_obj_t *root;
+    int32_t num_nodes;
+    int32_t count;
+    int32_t *arr;
+    int32_t *rev;
+    int32_t *label;
+    int32_t *sdom;
+    int32_t *dom;
+    int32_t *parent;
+    int32_t *dsu;
+    ruby_heap_obj_t **objs;
+    vector<int32_t> **reverse_graph;
+    vector<int32_t> **bucket;
+    vector<int32_t> **tree;
+
+    Progress *progress;
+
+    void dfs(ruby_heap_obj_t *node);
+    void dfs_child(ruby_heap_obj_t *obj, ruby_heap_obj_t *child);
+    void calculate_sdom();
+
+    int32_t find(int32_t u, int32_t x = 0);
+    void _union(int32_t u, int32_t v);
+};
+
+dominator_tree::dominator_tree(ruby_heap_obj_t *root, int32_t num_nodes)
+  : root(root), num_nodes(num_nodes + 1), count(0) {
+  arr = new int32_t[num_nodes];
+  rev = new int32_t[num_nodes];
+  label = new int32_t[num_nodes];
+  sdom = new int32_t[num_nodes];
+  dom = new int32_t[num_nodes];
+  parent = new int32_t[num_nodes];
+  dsu = new int32_t[num_nodes];
+  objs = new ruby_heap_obj_t*[num_nodes];
+
+  reverse_graph = new vector<int32_t>*[num_nodes];
+  bucket = new vector<int32_t>*[num_nodes];
+  tree = new vector<int32_t>*[num_nodes];
+
+  for (int32_t i = 0; i < this->num_nodes; ++i) {
+    reverse_graph[i] = new vector<int32_t>();
+    bucket[i] = new vector<int32_t>();
+    tree[i] = new vector<int32_t>();
+  }
+
+  progress = new Progress("generating dominator tree", num_nodes * 3);
+}
+
+dominator_tree::~dominator_tree() {
+  delete arr;
+  delete rev;
+  delete label;
+  delete sdom;
+  delete parent;
+  delete dsu;
+  delete objs;
+
+  for (int32_t i = 0; i < this->num_nodes; ++i) {
+    delete reverse_graph[i];
+    delete bucket[i];
+    delete tree[i];
+  }
+  delete reverse_graph;
+  delete bucket;
+  delete tree;
+
+  delete progress;
+}
+
+void
+dominator_tree::dfs_child(ruby_heap_obj_t *obj, ruby_heap_obj_t *child) {
+  int32_t u = obj->idx;
+  int32_t w = child->idx;
+
+  if (!arr[w]) {
+    dfs(child);
+    parent[arr[w]] = arr[u];
+  }
+
+  reverse_graph[arr[w]]->push_back(arr[u]);
+}
+
+void
+dominator_tree::dfs(ruby_heap_obj_t *obj) {
+  count++;
+  arr[obj->idx] = count;
+  rev[count] = obj->idx;
+  label[count] = count;
+  sdom[count] = count;
+  dsu[count] = count;
+  objs[obj->idx] = obj;
+
+  progress->increment();
+
+  if (likely((!is_root_object(obj) || !obj->as.root.children) && obj->refs_to)) {
+    for (uint32_t i = 0; obj->refs_to[i]; ++i) {
+      ruby_heap_obj_t *child = get_heap_object(obj->refs_to[i]);
+      if (child) {
+        dfs_child(obj, child);
+      } else {
+        /* printf("warning: could not find object 0x%" PRIx64 " in heap dump\n", obj->refs_to[i]); */
+      }
+    }
+  } else if (obj == root) {
+    for(auto it = obj->as.root.children->cbegin(); it != obj->as.root.children->cend(); it++) {
+      dfs_child(obj, *it);
+    }
+  }
+}
+
+int32_t
+dominator_tree::find(int32_t u, int32_t x) {
+  if (u == dsu[u]) {
+    return x ? -1 : u;
+  }
+
+  int32_t v = find(dsu[u], x + 1);
+  if (v < 0) {
+    return u;
+  }
+
+  if (sdom[label[dsu[u]]] < sdom[label[u]]) {
+    label[u] = label[dsu[u]];
+  }
+
+  dsu[u] = v;
+  return x ? v : label[u];
+}
+
+void
+dominator_tree::_union(int32_t u, int32_t v) {
+  dsu[v] = u;
+}
+
+void
+dominator_tree::calculate_sdom() {
+  for (int32_t i = count; i >= 1; i--) {
+    for (uint32_t j = 0; j < reverse_graph[i]->size(); j++) {
+      sdom[i] = min(sdom[i], sdom[find((*reverse_graph[i])[j])]);
+    }
+
+    if (i > 1) {
+      bucket[sdom[i]]->push_back(i);
+    }
+
+    for (uint32_t j = 0; j < bucket[i]->size(); j++) {
+      int32_t w = (*bucket[i])[j];
+      int32_t v = find(w);
+
+      if (sdom[v] == sdom[w]) {
+        dom[w] = sdom[w];
+      } else {
+        dom[w] = v;
+      }
+    }
+
+    if (i > 1) {
+      _union(parent[i], i);
+    }
+
+    progress->increment();
+  }
+}
+
+void
+dominator_tree::calculate() {
+  progress->start();
+
+  dfs(root);
+
+  progress->update(num_nodes);
+
+  calculate_sdom();
+
+  progress->update(num_nodes * 2);
+
+  for (int32_t i = 2; i <= count; i++) {
+    if (dom[i] != sdom[i]) {
+      dom[i] = dom[dom[i]];
+    }
+
+    tree[rev[i]]->push_back(rev[dom[i]]);
+    tree[rev[dom[i]]]->push_back(rev[i]);
+    progress->increment();
+  }
+
+  progress->complete();
+}
+
+void
+dominator_tree::retained_size(ruby_heap_obj_t *obj, size_t &size) {
+  size += is_root_object(obj) ? 0 : obj->as.obj.memsize;
+
+  if (obj != root) {
+    auto t = tree[obj->idx];
+    if (t->size() == 1) {
+      return;
+    } else {
+      for (size_t i = 1; i < t->size(); i++) {
+        ruby_heap_obj_t *obj = objs[(*t)[i]];
+        retained_size(obj, size);
+      }
+    }
+  }
+
+  return;
 }
 
 static const char *
@@ -599,7 +839,7 @@ print_object(ruby_heap_obj_t *obj) {
       name_title = "struct";
       p = obj->as.obj.as.value;
     } else if (type == RUBY_T_OBJECT || type == RUBY_T_ICLASS) {
-      name_title = "name";
+      name_title = type == RUBY_T_OBJECT ? "class" : "name";
       ruby_heap_obj_t *clazz = heap_map_[obj->as.obj.class_addr];
       assert(clazz);
       p = clazz->as.obj.as.value;
@@ -611,8 +851,11 @@ print_object(ruby_heap_obj_t *obj) {
       p = obj->as.obj.as.value;
     } else if (type == RUBY_T_HASH || type == RUBY_T_ARRAY) {
       name_title = "length";
-      sprintf(buf, "%d", obj->as.obj.as.size);
+      sprintf(buf, "%'d", obj->as.obj.as.size);
       p = buf;
+    } else if (type == RUBY_T_IMEMO) {
+      name_title = "imemo_type";
+      p = obj->as.obj.as.value;
     }
     if (name_title) {
       printf("%18s: %s%s%s\n", name_title,
@@ -621,7 +864,11 @@ print_object(ruby_heap_obj_t *obj) {
         type == RUBY_T_STRING ? "\"" : "");
     }
 
-    printf("%18s: %zu\n", "size", obj->as.obj.memsize);
+    printf("%18s: %'zu\n", "memsize", obj->as.obj.memsize);
+
+    size_t retained_size = 0;
+    dominator_tree_->retained_size(obj, retained_size);
+    printf("%18s: %'zu\n", "retained memsize", retained_size);
 
     if (obj->flags & RUBY_FL_SHARED) {
       printf("%18s: %s\n", "shared", "true");
@@ -898,7 +1145,11 @@ main(int argc, char **argv) {
   if (!heap_file) {
     fatal_error("unable to open %s: %d\n", heap_filename, errno);
   }
+
   parse_heap_dump(heap_file);
+
+  dominator_tree_ = new dominator_tree(root_, heap_obj_count_);
+  dominator_tree_->calculate();
 
   while (!exit_) {
     line = readline("harb> ");
