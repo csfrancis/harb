@@ -22,6 +22,8 @@
 #include <sparsehash/sparse_hash_map>
 #include <sparsehash/sparse_hash_set>
 
+#include "progress.h"
+
 #define likely(x)      __builtin_expect(!!(x), 1)
 #define unlikely(x)    __builtin_expect(!!(x), 0)
 
@@ -345,55 +347,11 @@ add_inverse_obj_references(ruby_heap_obj_t *obj) {
   obj->refs_from.shrink_to_fit();
 }
 
-class Progress {
-  uint64_t current, total;
-  int percentage;
-  const char *message;
-
-  public:
-
-  Progress(const char *message, uint64_t total) : current(0), total(total),
-                                                  percentage(-1), message(message) {}
-
-  void start() {
-    update(0);
-  }
-
-  void complete() {
-    update(total);
-    if (show_progress)
-      printf("\n");
-  }
-
-  void print() {
-    if (show_progress)
-      printf("\r%s (%d%%)", message, percentage);
-  }
-
-  void clear() {
-    if (show_progress)
-      printf("\r%*s\r", (int)strlen(message) + 7, "");
-  }
-
-  void increment(uint64_t amount=1) {
-    update(current + amount);
-  }
-
-  void update(uint64_t progress) {
-    this->current = progress;
-    int new_percentage = (progress * 100) / total;
-    if (percentage != new_percentage) {
-      this->percentage = new_percentage;
-      print();
-    }
-  }
-};
-
 static void
 build_back_references() {
   size_t num_heap_objects = heap_map_.size();
   ruby_heap_obj_list_t *roots = root_->as.root.children;
-  Progress progress("building back references", num_heap_objects + roots->size());
+  harb::Progress progress("building back references", num_heap_objects + roots->size());
   progress.start();
   for (auto it = heap_map_.begin(); it != heap_map_.end(); ++it) {
     add_inverse_obj_references(it->second);
@@ -534,7 +492,7 @@ read_heap_object(FILE *f, json_t **json_obj) {
 static void
 parse_heap_dump(FILE *f) {
   fseeko(f, 0, SEEK_END);
-  Progress progress("parsing", ftello(f));
+  harb::Progress progress("parsing", ftello(f));
   fseeko(f, 0, SEEK_SET);
   progress.start();
 
@@ -584,7 +542,7 @@ class dominator_tree {
     vector<int32_t> **bucket;
     vector<int32_t> **tree;
 
-    Progress *progress;
+    harb::Progress *progress;
 
     void dfs(ruby_heap_obj_t *node);
     void dfs_child(ruby_heap_obj_t *obj, ruby_heap_obj_t *child);
@@ -615,7 +573,7 @@ dominator_tree::dominator_tree(ruby_heap_obj_t *root, int32_t num_nodes)
     tree[i] = new vector<int32_t>();
   }
 
-  progress = new Progress("generating dominator tree", num_nodes * 3);
+  progress = new harb::Progress("generating dominator tree", num_nodes * 3);
 }
 
 dominator_tree::~dominator_tree() {
