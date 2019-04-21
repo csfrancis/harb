@@ -55,6 +55,7 @@ enum RubyFlagType {
 
 class RubyHeapObj;
 class Graph;
+class Parser;
 
 typedef std::vector<RubyHeapObj *> RubyHeapObjList;
 typedef std::vector<uint64_t> RubyHeapAddrList;
@@ -62,6 +63,7 @@ typedef std::vector<uint64_t> RubyHeapAddrList;
 class RubyHeapObj {
 private:
   friend class Graph;
+  friend class Parser;
 
   uint32_t flags;
   uint32_t idx; // unique node index
