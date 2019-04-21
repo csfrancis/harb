@@ -30,24 +30,13 @@ DominatorTree::DominatorTree(RubyHeapObj *root, int32_t num_nodes)
 }
 
 DominatorTree::~DominatorTree() {
-  delete arr;
-  delete rev;
-  delete label;
-  delete sdom;
-  delete parent;
-  delete dsu;
   delete objs;
 
   for (int32_t i = 0; i < this->num_nodes; ++i) {
-    delete reverse_graph[i];
-    delete bucket[i];
     delete tree[i];
   }
-  delete reverse_graph;
-  delete bucket;
-  delete tree;
 
-  delete progress;
+  delete tree;
 }
 
 void DominatorTree::dfs_child(RubyHeapObj *obj, RubyHeapObj *child) {
@@ -135,6 +124,24 @@ void DominatorTree::calculate_sdom() {
   }
 }
 
+void DominatorTree::cleanup_intermediate_state() {
+  delete arr;
+  delete rev;
+  delete label;
+  delete sdom;
+  delete parent;
+  delete dsu;
+
+  for (int32_t i = 0; i < this->num_nodes; ++i) {
+    delete reverse_graph[i];
+    delete bucket[i];
+  }
+  delete reverse_graph;
+  delete bucket;
+
+  delete progress;
+}
+
 void DominatorTree::calculate() {
   progress->start();
 
@@ -156,6 +163,8 @@ void DominatorTree::calculate() {
     progress->increment();
   }
 
+  cleanup_intermediate_state();
+
   progress->complete();
 }
 
@@ -173,8 +182,6 @@ void DominatorTree::retained_size(RubyHeapObj *obj, size_t &size) {
       }
     }
   }
-
-  return;
 }
 
 }
