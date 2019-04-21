@@ -58,6 +58,14 @@ public:
   Graph(FILE *f);
 
   RubyHeapObj* get_heap_object(uint64_t addr);
+
+  size_t get_retained_size(RubyHeapObj *obj);
+
+  size_t get_num_heap_objects() { return heap_map_.size(); }
+
+  template<typename Func> void each_heap_object(Func func) {
+    for (auto obj: heap_map_) { func(obj.second); }
+  }
 };
 
 }

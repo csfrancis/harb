@@ -46,7 +46,7 @@ const char * Graph::get_intern_string(const char *str) {
 }
 
 RubyHeapObj * Graph::create_heap_object(RubyValueType type) {
-  return new RubyHeapObj(type, ++heap_obj_count_);
+  return new RubyHeapObj(this, type, ++heap_obj_count_);
 }
 
 void Graph::parse_obj_references(RubyHeapObj *obj, json_t *refs_array) {
@@ -250,6 +250,12 @@ RubyHeapObj* Graph::get_heap_object(uint64_t addr) {
     return NULL;
   }
   return it->second;
+}
+
+size_t Graph::get_retained_size(RubyHeapObj *obj) {
+  size_t size = 0;
+  dominator_tree_->retained_size(obj, size);
+  return size;
 }
 
 }

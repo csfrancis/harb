@@ -66,6 +66,8 @@ private:
   uint32_t flags;
   uint32_t idx; // unique node index
 
+  Graph *graph;
+
   union {
     uint64_t *addr;
     RubyHeapObj **obj;
@@ -92,7 +94,7 @@ private:
   } as;
 
 public:
-  RubyHeapObj(RubyValueType t, int32_t idx);
+  RubyHeapObj(Graph *graph, RubyValueType t, int32_t idx);
 
   bool is_root_object() { return (flags & RUBY_T_MASK) == RUBY_T_ROOT; }
 

@@ -59,35 +59,34 @@ command_t commands_[] = {
   { "print", cmd_print, "Prints heap info for the address specified" },
   { "rootpath", cmd_rootpath, "Display the root path for the object specified" },
   { "help", cmd_help, "Displays this message"},
-  /* { "summary", cmd_summary, "Display a heap dump summary" }, */
+  { "summary", cmd_summary, "Display a heap dump summary" },
   /* { "diff", cmd_diff, "Diff current heap dump with specifed dump" }, */
   { NULL, NULL, NULL }
 };
 
-/* static void */
-/* cmd_summary(const char *) { */
-/*   typedef google::sparse_hash_map<uint32_t, size_t> type_map_t; */
-/*   type_map_t type_map; */
-/*   size_t total_size = 0; */
-/*   size_t num_heap_objects = heap_map_.size(); */
-/*   for (auto it = heap_map_.begin(); it != heap_map_.end(); ++it) { */
-/*     ruby_heap_obj *obj = it->second; */
-/*     total_size += obj->as.obj.memsize; */
+static void
+cmd_summary(const char *) {
+  typedef google::sparse_hash_map<uint32_t, size_t> type_map_t;
+  type_map_t type_map;
+  size_t total_size = 0;
+  size_t num_heap_objects = graph_->get_num_heap_objects();
 
-/*     uint32_t type = obj->flags & RUBY_T_MASK; */
-/*     if (type_map[type]) { */
-/*       type_map[type] += obj->as.obj.memsize; */
-/*     } else { */
-/*       type_map[type] = obj->as.obj.memsize; */
-/*     } */
-/*   } */
-/*   fprintf(out_, "total objects: %'zu\n", num_heap_objects); */
-/*   fprintf(out_, "total heap memsize: %'zu bytes\n", total_size); */
-/*   for (auto it = type_map.begin(); it != type_map.end(); ++it) { */
-/*     fprintf(out_, "  %s: %'zu bytes\n", RubyHeapObj::get_value_type_string(it->first), */
-/*         it->second); */
-/*   } */
-/* } */
+  graph_->each_heap_object([&] (RubyHeapObj *obj) {
+    total_size += obj->get_memsize();
+    uint32_t type = obj->get_type();
+    if (type_map[type]) {
+      type_map[type] += obj->get_memsize();
+    } else {
+      type_map[type] = obj->get_memsize();
+    }
+  });
+  fprintf(out_, "total objects: %'zu\n", num_heap_objects);
+  fprintf(out_, "total heap memsize: %'zu bytes\n", total_size);
+  for (auto it : type_map) {
+    fprintf(out_, "  %s: %'zu bytes\n", RubyHeapObj::get_value_type_string(it.first),
+        it.second);
+  }
+}
 
 static void
 cmd_quit(const char *) {

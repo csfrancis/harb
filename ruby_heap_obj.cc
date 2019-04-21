@@ -1,11 +1,12 @@
 #include <inttypes.h>
 
 #include "ruby_heap_obj.h"
+#include "graph.h"
 
 namespace harb {
 
-RubyHeapObj::RubyHeapObj(RubyValueType t, int32_t idx)
-  : flags(t), idx(idx) {
+RubyHeapObj::RubyHeapObj(Graph *graph, RubyValueType t, int32_t idx)
+  : flags(t), idx(idx), graph(graph) {
   refs_to.addr = NULL;
   as.obj.clazz.addr = 0;
 
@@ -210,9 +211,7 @@ void RubyHeapObj::print_object() {
 
     printf("%18s: %'zu\n", "memsize", get_memsize());
 
-    /* size_t retained_size = 0; */
-    /* dominator_tree_->retained_size(obj, retained_size); */
-    /* printf("%18s: %'zu\n", "retained memsize", retained_size); */
+    printf("%18s: %'zu\n", "retained memsize", graph->get_retained_size(this));
 
     if (flags & RUBY_FL_SHARED) {
       printf("%18s: %s\n", "shared", "true");
