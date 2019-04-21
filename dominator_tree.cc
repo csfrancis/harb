@@ -5,7 +5,7 @@
 
 namespace harb {
 
-dominator_tree::dominator_tree(RubyHeapObj *root, int32_t num_nodes)
+DominatorTree::DominatorTree(RubyHeapObj *root, int32_t num_nodes)
   : root(root), num_nodes(num_nodes + 1), count(0) {
   arr = new int32_t[num_nodes];
   rev = new int32_t[num_nodes];
@@ -29,7 +29,7 @@ dominator_tree::dominator_tree(RubyHeapObj *root, int32_t num_nodes)
   progress = new harb::Progress("generating dominator tree", num_nodes * 3);
 }
 
-dominator_tree::~dominator_tree() {
+DominatorTree::~DominatorTree() {
   delete arr;
   delete rev;
   delete label;
@@ -50,8 +50,7 @@ dominator_tree::~dominator_tree() {
   delete progress;
 }
 
-void
-dominator_tree::dfs_child(RubyHeapObj *obj, RubyHeapObj *child) {
+void DominatorTree::dfs_child(RubyHeapObj *obj, RubyHeapObj *child) {
   int32_t u = obj->get_index();
   int32_t w = child->get_index();
 
@@ -63,8 +62,7 @@ dominator_tree::dfs_child(RubyHeapObj *obj, RubyHeapObj *child) {
   reverse_graph[arr[w]]->push_back(arr[u]);
 }
 
-void
-dominator_tree::dfs(RubyHeapObj *obj) {
+void DominatorTree::dfs(RubyHeapObj *obj) {
   count++;
   arr[obj->get_index()] = count;
   rev[count] = obj->get_index();
@@ -86,8 +84,7 @@ dominator_tree::dfs(RubyHeapObj *obj) {
   }
 }
 
-int32_t
-dominator_tree::find(int32_t u, int32_t x) {
+int32_t DominatorTree::find(int32_t u, int32_t x) {
   if (u == dsu[u]) {
     return x ? -1 : u;
   }
@@ -105,13 +102,11 @@ dominator_tree::find(int32_t u, int32_t x) {
   return x ? v : label[u];
 }
 
-void
-dominator_tree::_union(int32_t u, int32_t v) {
+void DominatorTree::_union(int32_t u, int32_t v) {
   dsu[v] = u;
 }
 
-void
-dominator_tree::calculate_sdom() {
+void DominatorTree::calculate_sdom() {
   for (int32_t i = count; i >= 1; i--) {
     for (uint32_t j = 0; j < reverse_graph[i]->size(); j++) {
       sdom[i] = std::min(sdom[i], sdom[find((*reverse_graph[i])[j])]);
@@ -140,8 +135,7 @@ dominator_tree::calculate_sdom() {
   }
 }
 
-void
-dominator_tree::calculate() {
+void DominatorTree::calculate() {
   progress->start();
 
   dfs(root);
@@ -165,8 +159,7 @@ dominator_tree::calculate() {
   progress->complete();
 }
 
-void
-dominator_tree::retained_size(RubyHeapObj *obj, size_t &size) {
+void DominatorTree::retained_size(RubyHeapObj *obj, size_t &size) {
   size += obj->is_root_object() ? 0 : obj->get_memsize();
 
   if (obj != root) {

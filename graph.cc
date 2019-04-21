@@ -81,7 +81,7 @@ void Graph::update_references() {
 }
 
 void Graph::build_dominator_tree() {
-  dominator_tree_ = new dominator_tree(root_, parser_->get_heap_object_count());
+  dominator_tree_ = new DominatorTree(root_, parser_->get_heap_object_count());
   dominator_tree_->calculate();
 }
 

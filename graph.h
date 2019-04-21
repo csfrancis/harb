@@ -15,12 +15,12 @@
 namespace harb {
 
 class Graph {
-  typedef google::sparse_hash_map<uint64_t, RubyHeapObj *> ruby_heap_map_t;
+  typedef google::sparse_hash_map<uint64_t, RubyHeapObj *> RubyHeapObjMap;
 
   Parser *parser_;
   RubyHeapObj *root_;
-  ruby_heap_map_t heap_map_;
-  dominator_tree *dominator_tree_;
+  RubyHeapObjMap heap_map_;
+  DominatorTree *dominator_tree_;
 
   void add_inverse_obj_references(RubyHeapObj *obj);
   void update_obj_references(RubyHeapObj *obj);

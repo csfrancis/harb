@@ -26,10 +26,10 @@ class Parser {
   };
 
   typedef CityHasher<const char *> CityHasherString;
-  typedef google::sparse_hash_set<const char *, CityHasherString, eqstr> string_set_t;
+  typedef google::sparse_hash_set<const char *, CityHasherString, eqstr> StringSet;
 
   int32_t heap_obj_count_;
-  string_set_t intern_strings_;
+  StringSet intern_strings_;
   FILE *f_;
 
   const char * get_intern_string(const char *str);

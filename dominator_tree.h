@@ -10,10 +10,10 @@
 
 namespace harb {
 
-class dominator_tree {
+class DominatorTree {
   public:
-    dominator_tree(RubyHeapObj *root, int32_t num_nodes);
-    ~dominator_tree();
+    DominatorTree(RubyHeapObj *root, int32_t num_nodes);
+    ~DominatorTree();
 
     void calculate();
     void retained_size(RubyHeapObj *obj, size_t &size);
