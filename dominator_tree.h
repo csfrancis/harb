@@ -39,6 +39,7 @@ class DominatorTree {
     void dfs(RubyHeapObj *node);
     void dfs_child(RubyHeapObj *obj, RubyHeapObj *child);
     void calculate_sdom();
+    void cleanup_intermediate_state();
 
     int32_t find(int32_t u, int32_t x = 0);
     void _union(int32_t u, int32_t v);
