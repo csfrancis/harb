@@ -1,3 +1,6 @@
+#ifndef HARB_PROGRESS_H
+#define HARB_PROGRESS_H
+
 #include <stdlib.h>
 #include <inttypes.h>
 
@@ -21,3 +24,5 @@ class Progress {
 };
 
 }
+
+#endif // HARB_PROGRESS_H
