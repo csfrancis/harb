@@ -136,7 +136,7 @@ uint32_t Parser::parse_flags(json_t *heap_o, RubyValueType type) {
 }
 
 RubyHeapObj* Parser::read_heap_object(FILE *f, json_t **json_obj) {
-  if (json_obj) *json_obj = NULL;
+  *json_obj = NULL;
 
   json_t *o = json_loadf(f, JSON_DISABLE_EOF_CHECK | JSON_ALLOW_NUL, NULL);
   if (o == NULL) {
@@ -156,11 +156,8 @@ RubyHeapObj* Parser::read_heap_object(FILE *f, json_t **json_obj) {
     heap_obj = parse_heap_object(o, type);
   }
 
-  if (!json_obj) {
-    json_decref(o);
-  } else {
-    *json_obj = o;
-  }
+  *json_obj = o;
+
   return heap_obj;
 }
 

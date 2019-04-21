@@ -1,14 +1,11 @@
 #ifndef HARB_GRAPH_H
 #define HARB_GRAPH_H
 
-#include <stdio.h>
+#include <inttypes.h>
 
-#include <jansson.h>
-
-#include <city.h>
 #include <sparsehash/sparse_hash_map>
-#include <sparsehash/sparse_hash_set>
 
+#include "parser.h"
 #include "ruby_heap_obj.h"
 #include "dominator_tree.h"
 

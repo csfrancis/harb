@@ -50,9 +50,11 @@ public:
 
   template<typename Func> void parse(Func func) {
     fseeko(f_, 0, SEEK_SET);
-    RubyHeapObj *obj;
-    while ((obj = read_heap_object(f_, NULL)) != NULL) {
-      func(obj);
+    RubyHeapObj *obj = NULL;
+    json_t *json_obj = NULL;
+    while ((obj = read_heap_object(f_, &json_obj)) != NULL) {
+      func(obj, json_obj);
+      json_decref(json_obj);
     }
   }
 };

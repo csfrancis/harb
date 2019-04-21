@@ -60,7 +60,7 @@ command_t commands_[] = {
   { "rootpath", cmd_rootpath, "Display the root path for the object specified" },
   { "help", cmd_help, "Displays this message"},
   { "summary", cmd_summary, "Display a heap dump summary" },
-  /* { "diff", cmd_diff, "Diff current heap dump with specifed dump" }, */
+  { "diff", cmd_diff, "Diff current heap dump with specifed dump" },
   { NULL, NULL, NULL }
 };
 
@@ -102,46 +102,44 @@ cmd_help(const char *) {
   printf("\n");
 }
 
-/* static void */
-/* cmd_diff(const char *args) { */
-/*   if (args == NULL || strlen(args) == 0) { */
-/*     printf("error: you must specify a heap dump file\n"); */
-/*     return; */
-/*   } */
+static void
+cmd_diff(const char *args) {
+  if (args == NULL || strlen(args) == 0) {
+    printf("error: you must specify a heap dump file\n");
+    return;
+  }
 
-/*   FILE *f = fopen(args, "r"); */
-/*   if (!f) { */
-/*     printf("unable to open %s: %d\n", args, errno); */
-/*     return; */
-/*   } */
+  FILE *f = fopen(args, "r");
+  if (!f) {
+    printf("unable to open %s: %d\n", args, errno);
+    return;
+  }
 
-/*   char template_name[] = "harb_diff-XXXXXX"; */
-/*   int fd = mkstemp(template_name); */
-/*   if (fd == -1) { */
-/*     printf("unable to create tempfile: %d\n", errno); */
-/*     return; */
-/*   } */
+  char template_name[] = "harb_diff-XXXXXX";
+  int fd = mkstemp(template_name);
+  if (fd == -1) {
+    printf("unable to create tempfile: %d\n", errno);
+    return;
+  }
 
-/*   FILE *out = fdopen(fd, "w"); */
-/*   if (!out) { */
-/*     printf("unable to open temp fd: %d", errno); */
-/*     return; */
-/*   } */
+  FILE *out = fdopen(fd, "w");
+  if (!out) {
+    printf("unable to open temp fd: %d", errno);
+    return;
+  }
 
-/*   ruby_heap_obj_t *obj = NULL; */
-/*   json_t *json_obj = NULL; */
-/*   while ((obj = read_heap_object(f, &json_obj)) != NULL) { */
-/*     if (!is_root_object(obj) && heap_map_[obj->as.obj.addr] == NULL) { */
-/*       char *s = json_dumps(json_obj, 0); */
-/*       fprintf(out, "%s\n", s); */
-/*       free(s); */
-/*     } */
-/*     json_decref(json_obj); */
-/*   } */
+  Parser p(f);
+  p.parse([&] (RubyHeapObj *obj, json_t *json_obj) {
+    if (!obj->is_root_object() && graph_->get_heap_object(obj->get_addr()) == NULL) {
+      char *s = json_dumps(json_obj, 0);
+      fprintf(out, "%s\n", s);
+      free(s);
+    }
+  });
 
-/*   fclose(out); */
-/*   fclose(f); */
-/* } */
+  fclose(out);
+  fclose(f);
+}
 
 static RubyHeapObj *
 get_ruby_heap_obj_arg(const char *args) {
