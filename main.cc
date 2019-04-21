@@ -12,129 +12,20 @@
 #include <readline/readline.h>
 #include <readline/history.h>
 
-#include <jansson.h>
-
 #include <deque>
-#include <vector>
-
-#include <city.h>
 
 #include <sparsehash/sparse_hash_map>
 #include <sparsehash/sparse_hash_set>
 
-#define likely(x)      __builtin_expect(!!(x), 1)
-#define unlikely(x)    __builtin_expect(!!(x), 0)
+#include "graph.h"
+#include "ruby_heap_obj.h"
+#include "progress.h"
 
-///////////////////////////////////////////////////////////////////////////////
-// Ruby heap management
-///////////////////////////////////////////////////////////////////////////////
-
-using namespace std;
-using google::sparse_hash_set;
-using google::sparse_hash_map;
-
-enum ruby_value_type {
-    RUBY_T_NONE   = 0x00,
-
-    RUBY_T_OBJECT = 0x01,
-    RUBY_T_CLASS  = 0x02,
-    RUBY_T_MODULE = 0x03,
-    RUBY_T_FLOAT  = 0x04,
-    RUBY_T_STRING = 0x05,
-    RUBY_T_REGEXP = 0x06,
-    RUBY_T_ARRAY  = 0x07,
-    RUBY_T_HASH   = 0x08,
-    RUBY_T_STRUCT = 0x09,
-    RUBY_T_BIGNUM = 0x0a,
-    RUBY_T_FILE   = 0x0b,
-    RUBY_T_DATA   = 0x0c,
-    RUBY_T_MATCH  = 0x0d,
-    RUBY_T_COMPLEX  = 0x0e,
-    RUBY_T_RATIONAL = 0x0f,
-
-    RUBY_T_NIL    = 0x11,
-    RUBY_T_TRUE   = 0x12,
-    RUBY_T_FALSE  = 0x13,
-    RUBY_T_SYMBOL = 0x14,
-    RUBY_T_FIXNUM = 0x15,
-
-    RUBY_T_IMEMO  = 0x1a,
-    RUBY_T_UNDEF  = 0x1b,
-    RUBY_T_NODE   = 0x1c,
-    RUBY_T_ICLASS = 0x1d,
-    RUBY_T_ZOMBIE = 0x1e,
-
-    RUBY_T_MASK   = 0x1f
-};
-
-#define RUBY_T_ROOT RUBY_T_MASK
-
-enum ruby_flag_types {
-    RUBY_FL_FROZEN          = 0x20,
-    RUBY_FL_EMBEDDED        = 0x40,
-    RUBY_FL_FSTRING         = 0x80,
-    RUBY_FL_GC_WB_PROTECTED = 0x100,
-    RUBY_FL_GC_OLD          = 0x200,
-    RUBY_FL_GC_MARKED       = 0x400,
-    RUBY_FL_SHARED          = 0x800
-};
-
-struct ruby_heap_obj;
-
-typedef vector<struct ruby_heap_obj *> ruby_heap_obj_list_t;
-typedef vector<uint64_t> ruby_heap_addr_list_t;
-
-typedef struct ruby_heap_obj {
-  uint32_t flags;
-  uint32_t idx; // unique node index
-  uint64_t *refs_to;
-  ruby_heap_obj_list_t refs_from;
-
-  union {
-  struct {
-    uint64_t addr;
-    uint64_t class_addr;
-    size_t memsize;
-    union {
-      const char *value;
-      uint32_t size;
-    } as;
-  } obj;
-  struct {
-    const char *name;
-    ruby_heap_obj_list_t *children; // only used by the root_ object
-  } root;
-  } as;
-} ruby_heap_obj_t;
-
-struct eqstr {
-  bool operator()(const char* s1, const char* s2) const {
-    return (s1 == s2) || (s1 && s2 && strcmp(s1, s2) == 0);
-  }
-};
-
-template<class T> class CityHasher;
-template<> class CityHasher<const char *> {
-public:
-  std::size_t operator()(const char * s) const {
-    return CityHash64(s, strlen(s));
-  }
-};
-
-typedef CityHasher<const char *> CityHasherString;
-typedef sparse_hash_set<const char *, CityHasherString, eqstr> string_set_t;
-typedef sparse_hash_map<uint64_t, struct ruby_heap_obj *> ruby_heap_map_t;
-
-class dominator_tree;
+using namespace harb;
 
 bool exit_ = false;
-bool show_progress;
-string_set_t intern_strings_;
-ruby_heap_map_t heap_map_;
-ruby_heap_obj_t *root_;
-dominator_tree *dominator_tree_;
-int32_t heap_obj_count_;
 FILE *out_ = stdout;
+Graph *graph_;
 
 static void
 fatal_error(const char *fmt, ...) {
@@ -144,760 +35,6 @@ fatal_error(const char *fmt, ...) {
   vfprintf(stderr, fmt, args);
   va_end(args);
   exit(-1);
-}
-
-static ruby_heap_obj_t *
-create_heap_object() {
-  ruby_heap_obj_t *obj = new ruby_heap_obj_t();
-  obj->idx = ++heap_obj_count_;
-  new (&obj->refs_from) ruby_heap_obj_list_t();
-  return obj;
-}
-
-static ruby_heap_obj_t *
-create_heap_object(uint64_t addr) {
-  ruby_heap_obj_t *obj = create_heap_object();
-  obj->as.obj.addr = addr;
-  return obj;
-}
-
-static ruby_heap_obj_t *
-get_heap_object(uint64_t addr) {
-  auto it = heap_map_.find(addr);
-  if (it == heap_map_.end()) {
-    return NULL;
-  }
-  return it->second;
-}
-
-static inline bool
-is_root_object(ruby_heap_obj_t *obj) {
-  return (obj->flags & RUBY_T_MASK) == RUBY_T_ROOT;
-}
-
-static const char *
-get_string(const char *str) {
-  assert(str);
-  auto it = intern_strings_.find(str);
-  if (it != intern_strings_.end()) {
-    return *it;
-  }
-  const char *dup = strdup(str);
-  intern_strings_.insert(dup);
-  return dup;
-}
-
-static uint32_t
-get_heap_object_type(const char *type) {
-  assert(type);
-  if (strcmp(type, "OBJECT") == 0) {
-    return RUBY_T_OBJECT;
-  } else if (strcmp(type, "STRING") == 0) {
-    return RUBY_T_STRING;
-  } else if (strcmp(type, "HASH") == 0) {
-    return RUBY_T_HASH;
-  } else if (strcmp(type, "ARRAY") == 0) {
-    return RUBY_T_ARRAY;
-  } else if (strcmp(type, "CLASS") == 0) {
-    return RUBY_T_CLASS;
-  } else if (strcmp(type, "ICLASS") == 0) {
-    return RUBY_T_ICLASS;
-  } else if (strcmp(type, "DATA") == 0) {
-    return RUBY_T_DATA;
-  } else if (strcmp(type, "MODULE") == 0) {
-    return RUBY_T_MODULE;
-  } else if (strcmp(type, "STRUCT") == 0) {
-    return RUBY_T_STRUCT;
-  } else if (strcmp(type, "NODE") == 0) {
-    return RUBY_T_NODE;
-  } else if (strcmp(type, "REGEXP") == 0) {
-    return RUBY_T_REGEXP;
-  } else if (strcmp(type, "BIGNUM") == 0) {
-    return RUBY_T_BIGNUM;
-  } else if (strcmp(type, "FLOAT") == 0) {
-    return RUBY_T_FLOAT;
-  } else if (strcmp(type, "FILE") == 0) {
-    return RUBY_T_FILE;
-  } else if (strcmp(type, "MATCH") == 0) {
-    return RUBY_T_MATCH;
-  } else if (strcmp(type, "COMPLEX") == 0) {
-    return RUBY_T_COMPLEX;
-  } else if (strcmp(type, "RATIONAL") == 0) {
-    return RUBY_T_RATIONAL;
-  } else if (strcmp(type, "NIL") == 0) {
-    return RUBY_T_NIL;
-  } else if (strcmp(type, "TRUE") == 0) {
-    return RUBY_T_TRUE;
-  } else if (strcmp(type, "FALSE") == 0) {
-    return RUBY_T_FALSE;
-  } else if (strcmp(type, "SYMBOL") == 0) {
-    return RUBY_T_SYMBOL;
-  } else if (strcmp(type, "FIXNUM") == 0) {
-    return RUBY_T_FIXNUM;
-  } else if (strcmp(type, "UNDEF") == 0) {
-    return RUBY_T_UNDEF;
-  } else if (strcmp(type, "ZOMBIE") == 0) {
-    return RUBY_T_ZOMBIE;
-  } else if (strcmp(type, "ROOT") == 0) {
-    return RUBY_T_ROOT;
-  } else if (strcmp(type, "IMEMO") == 0) {
-    return RUBY_T_IMEMO;
-  }
-  return RUBY_T_NONE;
-}
-
-static const char *
-get_heap_object_type_string(uint32_t type) {
-  uint32_t t = type & RUBY_T_MASK;
-  if (t == RUBY_T_OBJECT) {
-    return "OBJECT";
-  } else if (t == RUBY_T_STRING) {
-    return "STRING";
-  } else if (t == RUBY_T_HASH) {
-    return "HASH";
-  } else if (t == RUBY_T_ARRAY) {
-    return "ARRAY";
-  } else if (t == RUBY_T_CLASS) {
-    return "CLASS";
-  } else if (t == RUBY_T_ICLASS) {
-    return "ICLASS";
-  } else if (t == RUBY_T_DATA) {
-    return "DATA";
-  } else if (t == RUBY_T_MODULE) {
-    return "MODULE";
-  } else if (t == RUBY_T_STRUCT) {
-    return "STRUCT";
-  } else if (t == RUBY_T_NODE) {
-    return "NODE";
-  } else if (t == RUBY_T_REGEXP) {
-    return "REGEXP";
-  } else if (t == RUBY_T_BIGNUM) {
-    return "BIGNUM";
-  } else if (t == RUBY_T_FLOAT) {
-    return "FLOAT";
-  } else if (t == RUBY_T_FILE) {
-    return "FILE";
-  } else if (t == RUBY_T_MATCH) {
-    return "MATCH";
-  } else if (t == RUBY_T_COMPLEX) {
-    return "COMPLEX";
-  } else if (t == RUBY_T_RATIONAL) {
-    return "RATIONAL";
-  } else if (t == RUBY_T_NIL) {
-    return "NIL";
-  } else if (t == RUBY_T_TRUE) {
-    return "TRUE";
-  } else if (t == RUBY_T_FALSE) {
-    return "FALSE";
-  } else if (t == RUBY_T_SYMBOL) {
-    return "SYMBOL";
-  } else if (t == RUBY_T_FIXNUM) {
-    return "FIXNUM";
-  } else if (t == RUBY_T_UNDEF) {
-    return "UNDEF";
-  } else if (t == RUBY_T_ZOMBIE) {
-    return "ZOMBIE";
-  } else if (t == RUBY_T_ROOT) {
-    return "ROOT";
-  } else if (t == RUBY_T_IMEMO) {
-    return "IMEMO";
-  }
-  return "NONE";
-}
-
-static void
-parse_obj_references(ruby_heap_obj_t *obj, json_t *refs_array) {
-  if (!refs_array) {
-    return;
-  }
-  assert(json_typeof(refs_array) == JSON_ARRAY);
-  assert(obj->refs_to == NULL);
-  size_t size = json_array_size(refs_array);
-  if (size == 0) {
-    return;
-  }
-
-  uint32_t i;
-  obj->refs_to = new uint64_t[size + 1];
-  for (i = 0; i < size; ++i) {
-    json_t *child_o = json_array_get(refs_array, i);
-    assert(child_o);
-    assert(json_typeof(child_o) == JSON_STRING);
-    uint64_t child_addr = strtoull(json_string_value(child_o), NULL, 0);
-    assert(child_addr != 0);
-    obj->refs_to[i] = child_addr;
-  }
-  obj->refs_to[i] = 0;
-}
-
-static void
-add_inverse_obj_references(ruby_heap_obj_t *obj) {
-  uint64_t *ref_ptr = obj->refs_to;
-  if (!ref_ptr) {
-    return;
-  }
-  while (uint64_t addr = *ref_ptr++) {
-    ruby_heap_obj_t *ref = get_heap_object(addr);
-    if (ref) {
-      ref->refs_from.push_back(obj);
-    }
-  }
-  obj->refs_from.shrink_to_fit();
-}
-
-class Progress {
-  uint64_t current, total;
-  int percentage;
-  const char *message;
-
-  public:
-
-  Progress(const char *message, uint64_t total) : current(0), total(total),
-                                                  percentage(-1), message(message) {}
-
-  void start() {
-    update(0);
-  }
-
-  void complete() {
-    update(total);
-    if (show_progress)
-      printf("\n");
-  }
-
-  void print() {
-    if (show_progress)
-      printf("\r%s (%d%%)", message, percentage);
-  }
-
-  void clear() {
-    if (show_progress)
-      printf("\r%*s\r", (int)strlen(message) + 7, "");
-  }
-
-  void increment(uint64_t amount=1) {
-    update(current + amount);
-  }
-
-  void update(uint64_t progress) {
-    this->current = progress;
-    int new_percentage = (progress * 100) / total;
-    if (percentage != new_percentage) {
-      this->percentage = new_percentage;
-      print();
-    }
-  }
-};
-
-static void
-build_back_references() {
-  size_t num_heap_objects = heap_map_.size();
-  ruby_heap_obj_list_t *roots = root_->as.root.children;
-  Progress progress("building back references", num_heap_objects + roots->size());
-  progress.start();
-  for (auto it = heap_map_.begin(); it != heap_map_.end(); ++it) {
-    add_inverse_obj_references(it->second);
-    progress.increment();
-  }
-  for (auto it = roots->begin(); it != roots->end(); ++it) {
-    add_inverse_obj_references(*it);
-    progress.increment();
-  }
-  progress.complete();
-}
-
-static ruby_heap_obj_t *
-parse_root_object(json_t *root_o) {
-  json_t *name_o = json_object_get(root_o, "root");
-  assert(name_o);
-
-  ruby_heap_obj_t *gc_root = create_heap_object();
-  gc_root->flags = RUBY_T_ROOT;
-  gc_root->as.root.name = get_string(json_string_value(name_o));
-  parse_obj_references(gc_root, json_object_get(root_o, "references"));
-  return gc_root;
-}
-
-static uint32_t
-parse_flags(json_t *heap_o, uint32_t type) {
-  uint32_t flags = type;
-
-  if (json_object_get(heap_o, "frozen") == json_true()) {
-    flags |= RUBY_FL_FROZEN;
-  }
-
-  if (json_object_get(heap_o, "shared") == json_true()) {
-    flags |= RUBY_FL_SHARED;
-  }
-
-  return flags;
-}
-
-static ruby_heap_obj_t *
-parse_heap_object(json_t *heap_o, uint32_t type) {
-  json_t *addr_o = json_object_get(heap_o, "address");
-  if (!addr_o) return NULL;
-
-  assert(json_typeof(addr_o) == JSON_STRING);
-  const char *addr_s = json_string_value(addr_o);
-  assert(addr_s != NULL);
-
-  uint64_t addr = strtoull(addr_s, NULL, 0);
-  assert(addr != 0);
-  ruby_heap_obj_t *obj = create_heap_object(addr);
-  obj->flags = parse_flags(heap_o, type);
-
-  if (type == RUBY_T_STRING) {
-    json_t *value_o = json_object_get(heap_o, "value");
-    if (value_o) {
-      assert(json_typeof(value_o) == JSON_STRING);
-      obj->as.obj.as.value = get_string(json_string_value(value_o));
-    }
-  } else if (type == RUBY_T_OBJECT || type == RUBY_T_ICLASS) {
-    json_t *class_o = json_object_get(heap_o, "class");
-    if (class_o) {
-      assert(json_typeof(class_o) == JSON_STRING);
-      obj->as.obj.class_addr = strtoull(json_string_value(class_o), NULL, 0);
-    }
-  } else if (type == RUBY_T_CLASS || type == RUBY_T_MODULE) {
-    json_t *name_o = json_object_get(heap_o, "name");
-    if (name_o) {
-      assert(json_typeof(name_o) == JSON_STRING);
-      obj->as.obj.as.value = get_string(json_string_value(name_o));
-    }
-  } else if (type == RUBY_T_DATA) {
-    json_t *struct_o = json_object_get(heap_o, "struct");
-    if (struct_o) {
-      assert(json_typeof(struct_o) == JSON_STRING);
-      obj->as.obj.as.value = get_string(json_string_value(struct_o));
-    }
-  } else if (type == RUBY_T_HASH) {
-    json_t *size_o = json_object_get(heap_o, "size");
-    if (size_o) {
-      assert(json_typeof(size_o) == JSON_INTEGER);
-      obj->as.obj.as.size = json_integer_value(size_o);
-    }
-  } else if (type == RUBY_T_ARRAY) {
-    json_t *length_o = json_object_get(heap_o, "length");
-    if (length_o) {
-      assert(json_typeof(length_o) == JSON_INTEGER);
-      obj->as.obj.as.size = json_integer_value(length_o);
-    }
-  } else if (type == RUBY_T_IMEMO) {
-    json_t *name_o = json_object_get(heap_o, "imemo_type");
-    if (name_o) {
-      assert(json_typeof(name_o) == JSON_STRING);
-      obj->as.obj.as.value = get_string(json_string_value(name_o));
-    }
-  }
-
-  json_t * memsize_o = json_object_get(heap_o, "memsize");
-  if (memsize_o) {
-    assert(json_typeof(memsize_o) == JSON_INTEGER);
-    obj->as.obj.memsize = json_integer_value(memsize_o);
-  }
-
-  parse_obj_references(obj, json_object_get(heap_o, "references"));
-  return obj;
-}
-
-static ruby_heap_obj_t *
-read_heap_object(FILE *f, json_t **json_obj) {
-  if (json_obj) *json_obj = NULL;
-
-  json_t *o = json_loadf(f, JSON_DISABLE_EOF_CHECK | JSON_ALLOW_NUL, NULL);
-  if (o == NULL) {
-    return NULL;
-  }
-
-  assert(json_typeof(o) == JSON_OBJECT);
-
-  json_t *type_o = json_object_get(o, "type");
-  assert(type_o);
-  uint32_t type = get_heap_object_type(json_string_value(type_o));
-
-  ruby_heap_obj_t *heap_obj;
-  if (type == RUBY_T_ROOT) {
-    heap_obj = parse_root_object(o);
-  } else {
-    heap_obj = parse_heap_object(o, type);
-  }
-
-  if (!json_obj) {
-    json_decref(o);
-  } else {
-    *json_obj = o;
-  }
-  return heap_obj;
-}
-
-static void
-parse_heap_dump(FILE *f) {
-  fseeko(f, 0, SEEK_END);
-  Progress progress("parsing", ftello(f));
-  fseeko(f, 0, SEEK_SET);
-  progress.start();
-
-  root_ = create_heap_object();
-  root_->flags = RUBY_T_ROOT;
-  root_->as.root.children = new ruby_heap_obj_list_t();
-
-  ruby_heap_obj_t *obj;
-  while ((obj = read_heap_object(f, NULL)) != NULL) {
-    if (is_root_object(obj)) {
-      root_->as.root.children->push_back(obj);
-    } else {
-      heap_map_[obj->as.obj.addr] = obj;
-    }
-
-    progress.update(ftello(f));
-  }
-  progress.complete();
-  build_back_references();
-}
-
-///////////////////////////////////////////////////////////////////////////////
-// Dominator Tree
-///////////////////////////////////////////////////////////////////////////////
-
-class dominator_tree {
-  public:
-    dominator_tree(ruby_heap_obj_t *root, int32_t num_nodes);
-    ~dominator_tree();
-
-    void calculate();
-    void retained_size(ruby_heap_obj_t *obj, size_t &size);
-
-  private:
-    ruby_heap_obj_t *root;
-    int32_t num_nodes;
-    int32_t count;
-    int32_t *arr;
-    int32_t *rev;
-    int32_t *label;
-    int32_t *sdom;
-    int32_t *dom;
-    int32_t *parent;
-    int32_t *dsu;
-    ruby_heap_obj_t **objs;
-    vector<int32_t> **reverse_graph;
-    vector<int32_t> **bucket;
-    vector<int32_t> **tree;
-
-    Progress *progress;
-
-    void dfs(ruby_heap_obj_t *node);
-    void dfs_child(ruby_heap_obj_t *obj, ruby_heap_obj_t *child);
-    void calculate_sdom();
-
-    int32_t find(int32_t u, int32_t x = 0);
-    void _union(int32_t u, int32_t v);
-};
-
-dominator_tree::dominator_tree(ruby_heap_obj_t *root, int32_t num_nodes)
-  : root(root), num_nodes(num_nodes + 1), count(0) {
-  arr = new int32_t[num_nodes];
-  rev = new int32_t[num_nodes];
-  label = new int32_t[num_nodes];
-  sdom = new int32_t[num_nodes];
-  dom = new int32_t[num_nodes];
-  parent = new int32_t[num_nodes];
-  dsu = new int32_t[num_nodes];
-  objs = new ruby_heap_obj_t*[num_nodes];
-
-  reverse_graph = new vector<int32_t>*[num_nodes];
-  bucket = new vector<int32_t>*[num_nodes];
-  tree = new vector<int32_t>*[num_nodes];
-
-  for (int32_t i = 0; i < this->num_nodes; ++i) {
-    reverse_graph[i] = new vector<int32_t>();
-    bucket[i] = new vector<int32_t>();
-    tree[i] = new vector<int32_t>();
-  }
-
-  progress = new Progress("generating dominator tree", num_nodes * 3);
-}
-
-dominator_tree::~dominator_tree() {
-  delete arr;
-  delete rev;
-  delete label;
-  delete sdom;
-  delete parent;
-  delete dsu;
-  delete objs;
-
-  for (int32_t i = 0; i < this->num_nodes; ++i) {
-    delete reverse_graph[i];
-    delete bucket[i];
-    delete tree[i];
-  }
-  delete reverse_graph;
-  delete bucket;
-  delete tree;
-
-  delete progress;
-}
-
-void
-dominator_tree::dfs_child(ruby_heap_obj_t *obj, ruby_heap_obj_t *child) {
-  int32_t u = obj->idx;
-  int32_t w = child->idx;
-
-  if (!arr[w]) {
-    dfs(child);
-    parent[arr[w]] = arr[u];
-  }
-
-  reverse_graph[arr[w]]->push_back(arr[u]);
-}
-
-void
-dominator_tree::dfs(ruby_heap_obj_t *obj) {
-  count++;
-  arr[obj->idx] = count;
-  rev[count] = obj->idx;
-  label[count] = count;
-  sdom[count] = count;
-  dsu[count] = count;
-  objs[obj->idx] = obj;
-
-  progress->increment();
-
-  if (likely((!is_root_object(obj) || !obj->as.root.children) && obj->refs_to)) {
-    for (uint32_t i = 0; obj->refs_to[i]; ++i) {
-      ruby_heap_obj_t *child = get_heap_object(obj->refs_to[i]);
-      if (child) {
-        dfs_child(obj, child);
-      } else {
-        /* printf("warning: could not find object 0x%" PRIx64 " in heap dump\n", obj->refs_to[i]); */
-      }
-    }
-  } else if (obj == root) {
-    for(auto it = obj->as.root.children->cbegin(); it != obj->as.root.children->cend(); it++) {
-      dfs_child(obj, *it);
-    }
-  }
-}
-
-int32_t
-dominator_tree::find(int32_t u, int32_t x) {
-  if (u == dsu[u]) {
-    return x ? -1 : u;
-  }
-
-  int32_t v = find(dsu[u], x + 1);
-  if (v < 0) {
-    return u;
-  }
-
-  if (sdom[label[dsu[u]]] < sdom[label[u]]) {
-    label[u] = label[dsu[u]];
-  }
-
-  dsu[u] = v;
-  return x ? v : label[u];
-}
-
-void
-dominator_tree::_union(int32_t u, int32_t v) {
-  dsu[v] = u;
-}
-
-void
-dominator_tree::calculate_sdom() {
-  for (int32_t i = count; i >= 1; i--) {
-    for (uint32_t j = 0; j < reverse_graph[i]->size(); j++) {
-      sdom[i] = min(sdom[i], sdom[find((*reverse_graph[i])[j])]);
-    }
-
-    if (i > 1) {
-      bucket[sdom[i]]->push_back(i);
-    }
-
-    for (uint32_t j = 0; j < bucket[i]->size(); j++) {
-      int32_t w = (*bucket[i])[j];
-      int32_t v = find(w);
-
-      if (sdom[v] == sdom[w]) {
-        dom[w] = sdom[w];
-      } else {
-        dom[w] = v;
-      }
-    }
-
-    if (i > 1) {
-      _union(parent[i], i);
-    }
-
-    progress->increment();
-  }
-}
-
-void
-dominator_tree::calculate() {
-  progress->start();
-
-  dfs(root);
-
-  progress->update(num_nodes);
-
-  calculate_sdom();
-
-  progress->update(num_nodes * 2);
-
-  for (int32_t i = 2; i <= count; i++) {
-    if (dom[i] != sdom[i]) {
-      dom[i] = dom[dom[i]];
-    }
-
-    tree[rev[i]]->push_back(rev[dom[i]]);
-    tree[rev[dom[i]]]->push_back(rev[i]);
-    progress->increment();
-  }
-
-  progress->complete();
-}
-
-void
-dominator_tree::retained_size(ruby_heap_obj_t *obj, size_t &size) {
-  size += is_root_object(obj) ? 0 : obj->as.obj.memsize;
-
-  if (obj != root) {
-    auto t = tree[obj->idx];
-    if (t->size() == 1) {
-      return;
-    } else {
-      for (size_t i = 1; i < t->size(); i++) {
-        ruby_heap_obj_t *obj = objs[(*t)[i]];
-        retained_size(obj, size);
-      }
-    }
-  }
-
-  return;
-}
-
-static const char *
-print_object_summary(ruby_heap_obj_t *obj, char *buf, size_t buf_sz) {
-  uint32_t type = obj->flags & RUBY_T_MASK;
-  if (type == RUBY_T_ROOT) {
-    return "ROOT";
-  }
-
-  char value_buf[128];
-  const char *value_bufp = value_buf;
-  if (type == RUBY_T_ARRAY || type == RUBY_T_HASH) {
-    sprintf(value_buf, "size %d", obj->as.obj.as.size);
-  } else if (type == RUBY_T_OBJECT || type == RUBY_T_ICLASS) {
-    ruby_heap_obj_t *clazz = heap_map_[obj->as.obj.class_addr];
-    assert(clazz);
-    value_bufp = clazz->as.obj.as.value;
-  } else if (type == RUBY_T_STRING && obj->flags & RUBY_FL_SHARED) {
-    ruby_heap_obj_t *ref_string = get_heap_object(obj->refs_to[0]);
-    value_bufp = ref_string->as.obj.as.value;
-  } else {
-    value_bufp = obj->as.obj.as.value;
-  }
-  int ret = snprintf(buf, buf_sz, "%s: %s%s%s", get_heap_object_type_string(obj->flags),
-    type == RUBY_T_STRING ? "\"" : "",
-    value_bufp,
-    type == RUBY_T_STRING ? "\"" : "");
-  if (ret < 0) {
-    return NULL;
-  }
-  if ((unsigned) ret >= buf_sz && buf_sz > 3) {
-    buf[buf_sz - 2] = '.';
-    buf[buf_sz - 3] = '.';
-    buf[buf_sz - 4] = '.';
-  }
-  return buf;
-}
-
-static void
-print_ref_object(ruby_heap_obj_t *obj) {
-  char buf[64];
-  if (is_root_object(obj)) {
-    printf("%20s  ROOT (%s)\n", "", obj->as.root.name);
-  } else {
-    printf("%20s  0x%" PRIx64 " (%s)\n", "", obj->as.obj.addr, print_object_summary(obj, buf, sizeof(buf)));
-  }
-}
-
-static void
-print_object(ruby_heap_obj_t *obj) {
-  uint32_t type = obj->flags & RUBY_T_MASK;
-  if (type == RUBY_T_ROOT) {
-    printf("ROOT (%s)\n", obj->as.root.name);
-  } else {
-    char buf[64] = { 0 };
-    const char *p = buf;
-    const char *name_title = NULL;
-    sprintf(buf, "0x%" PRIx64, obj->as.obj.addr);
-    printf("%18s: \"%s\"\n", buf, get_heap_object_type_string(obj->flags));
-    if (type == RUBY_T_DATA) {
-      name_title = "struct";
-      p = obj->as.obj.as.value;
-    } else if (type == RUBY_T_OBJECT || type == RUBY_T_ICLASS) {
-      name_title = type == RUBY_T_OBJECT ? "class" : "name";
-      ruby_heap_obj_t *clazz = heap_map_[obj->as.obj.class_addr];
-      assert(clazz);
-      p = clazz->as.obj.as.value;
-    } else if (type == RUBY_T_STRING) {
-      name_title = "value";
-      p = obj->as.obj.as.value;
-    } else if (type == RUBY_T_CLASS || type == RUBY_T_MODULE) {
-      name_title = "name";
-      p = obj->as.obj.as.value;
-    } else if (type == RUBY_T_HASH || type == RUBY_T_ARRAY) {
-      name_title = "length";
-      sprintf(buf, "%'d", obj->as.obj.as.size);
-      p = buf;
-    } else if (type == RUBY_T_IMEMO) {
-      name_title = "imemo_type";
-      p = obj->as.obj.as.value;
-    }
-    if (name_title) {
-      printf("%18s: %s%s%s\n", name_title,
-        type == RUBY_T_STRING ? "\"" : "",
-        p,
-        type == RUBY_T_STRING ? "\"" : "");
-    }
-
-    printf("%18s: %'zu\n", "memsize", obj->as.obj.memsize);
-
-    size_t retained_size = 0;
-    dominator_tree_->retained_size(obj, retained_size);
-    printf("%18s: %'zu\n", "retained memsize", retained_size);
-
-    if (obj->flags & RUBY_FL_SHARED) {
-      printf("%18s: %s\n", "shared", "true");
-    }
-
-    if (obj->flags & RUBY_FL_FROZEN) {
-      printf("%18s: %s\n", "frozen", "true");
-    }
-
-    if (obj->refs_to) {
-      printf("%18s: [\n", "references to");
-      for (uint32_t i = 0; obj->refs_to[i]; ++i) {
-        ruby_heap_obj_t *ref_obj = get_heap_object(obj->refs_to[i]);
-        if (ref_obj) {
-          print_ref_object(ref_obj);
-        } else {
-          printf("%20s  0x%" PRIx64 " missing\n", "", obj->refs_to[i]);
-        }
-      }
-      printf("%18s  ]\n", "");
-    }
-    if (obj->refs_from.size() > 0) {
-      printf("%18s: [\n", "referenced from");
-      for (auto it = obj->refs_from.begin(); it != obj->refs_from.end(); ++it) {
-        print_ref_object(*it);
-      }
-      printf("%18s  ]\n", "");
-    }
-  }
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -929,26 +66,25 @@ command_t commands_[] = {
 
 static void
 cmd_summary(const char *) {
-  typedef sparse_hash_map<uint32_t, size_t> type_map_t;
+  typedef google::sparse_hash_map<uint32_t, size_t> type_map_t;
   type_map_t type_map;
   size_t total_size = 0;
-  size_t num_heap_objects = heap_map_.size();
-  for (auto it = heap_map_.begin(); it != heap_map_.end(); ++it) {
-    ruby_heap_obj *obj = it->second;
-    total_size += obj->as.obj.memsize;
+  size_t num_heap_objects = graph_->get_num_heap_objects();
 
-    uint32_t type = obj->flags & RUBY_T_MASK;
+  graph_->each_heap_object([&] (RubyHeapObj *obj) {
+    total_size += obj->get_memsize();
+    uint32_t type = obj->get_type();
     if (type_map[type]) {
-      type_map[type] += obj->as.obj.memsize;
+      type_map[type] += obj->get_memsize();
     } else {
-      type_map[type] = obj->as.obj.memsize;
+      type_map[type] = obj->get_memsize();
     }
-  }
+  });
   fprintf(out_, "total objects: %'zu\n", num_heap_objects);
   fprintf(out_, "total heap memsize: %'zu bytes\n", total_size);
-  for (auto it = type_map.begin(); it != type_map.end(); ++it) {
-    fprintf(out_, "  %s: %'zu bytes\n", get_heap_object_type_string(it->first),
-        it->second);
+  for (auto it : type_map) {
+    fprintf(out_, "  %s: %'zu bytes\n", RubyHeapObj::get_value_type_string(it.first),
+        it.second);
   }
 }
 
@@ -992,22 +128,20 @@ cmd_diff(const char *args) {
     return;
   }
 
-  ruby_heap_obj_t *obj = NULL;
-  json_t *json_obj = NULL;
-  while ((obj = read_heap_object(f, &json_obj)) != NULL) {
-    if (!is_root_object(obj) && heap_map_[obj->as.obj.addr] == NULL) {
+  Parser p(f);
+  p.parse([&] (RubyHeapObj *obj, json_t *json_obj) {
+    if (!obj->is_root_object() && graph_->get_heap_object(obj->get_addr()) == NULL) {
       char *s = json_dumps(json_obj, 0);
       fprintf(out, "%s\n", s);
       free(s);
     }
-    json_decref(json_obj);
-  }
+  });
 
   fclose(out);
   fclose(f);
 }
 
-static ruby_heap_obj_t *
+static RubyHeapObj *
 get_ruby_heap_obj_arg(const char *args) {
   if (args == NULL || strlen(args) == 0) {
     printf("error: you must specify an address\n");
@@ -1020,7 +154,7 @@ get_ruby_heap_obj_arg(const char *args) {
     return NULL;
   }
 
-  ruby_heap_obj_t *obj = heap_map_[addr];
+  RubyHeapObj *obj = graph_->get_heap_object(addr);
   if (!obj) {
     printf("error: no ruby object found at address 0x%" PRIx64 "\n", addr);
     return NULL;
@@ -1031,26 +165,26 @@ get_ruby_heap_obj_arg(const char *args) {
 
 static void
 cmd_print(const char *args) {
-  ruby_heap_obj_t *obj = get_ruby_heap_obj_arg(args);
+  RubyHeapObj *obj = get_ruby_heap_obj_arg(args);
   if (!obj) {
     return;
   }
 
-  print_object(obj);
+  obj->print_object();
 }
 
 static void
 cmd_rootpath(const char *args) {
   bool found = false;
-  ruby_heap_obj_t *obj = get_ruby_heap_obj_arg(args);
+  RubyHeapObj *obj = get_ruby_heap_obj_arg(args);
   if (!obj) {
     return;
   }
 
-  ruby_heap_obj_t *cur;
-  deque<ruby_heap_obj_t *> q;
-  sparse_hash_set<ruby_heap_obj_t *> visited;
-  sparse_hash_map<ruby_heap_obj_t *, ruby_heap_obj_t *> parent;
+  RubyHeapObj *cur;
+  std::deque<RubyHeapObj *> q;
+  google::sparse_hash_set<RubyHeapObj *> visited;
+  google::sparse_hash_map<RubyHeapObj *, RubyHeapObj *> parent;
 
   q.push_back(obj);
   visited.insert(obj);
@@ -1059,28 +193,28 @@ cmd_rootpath(const char *args) {
     cur = q.front();
     q.pop_front();
 
-    for (auto it = cur->refs_from.begin(); it != cur->refs_from.end(); ++it) {
-      if (visited.find(*it) == visited.end()) {
-        visited.insert(*it);
-        parent[*it] = cur;
-        if (is_root_object(*it)) {
-          cur = *it;
+    for (auto ref : *(cur->get_refs_from())) {
+      if (visited.find(ref) == visited.end()) {
+        visited.insert(ref);
+        parent[ref] = cur;
+        if (ref->is_root_object()) {
+          cur = ref;
           found = true;
           break;
         }
-        q.push_back(*it);
+        q.push_back(ref);
       }
     }
   }
 
   if (!found) {
-    printf("error: could not find path to root for 0x%" PRIx64 "\n", obj->as.obj.addr);
+    printf("error: could not find path to root for 0x%" PRIx64 "\n", obj->get_addr());
     return;
   }
 
-  printf("\nroot path to 0x%" PRIx64 ":\n", obj->as.obj.addr);
+  printf("\nroot path to 0x%" PRIx64 ":\n", obj->get_addr());
   while (cur != NULL) {
-    print_ref_object(cur);
+    cur->print_ref_object();
     cur = parent[cur];
   }
   printf("\n");
@@ -1131,7 +265,6 @@ main(int argc, char **argv) {
   char *line;
 
   setlocale(LC_ALL, "");
-  show_progress = isatty(STDOUT_FILENO) == 1;
 
   setvbuf(stdout, NULL, _IONBF, 0);
 
@@ -1146,10 +279,7 @@ main(int argc, char **argv) {
     fatal_error("unable to open %s: %d\n", heap_filename, errno);
   }
 
-  parse_heap_dump(heap_file);
-
-  dominator_tree_ = new dominator_tree(root_, heap_obj_count_);
-  dominator_tree_->calculate();
+  graph_ = new Graph(heap_file);
 
   while (!exit_) {
     line = readline("harb> ");
