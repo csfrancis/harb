@@ -2,7 +2,14 @@
 
 namespace harb {
 
-Parser::Parser(FILE *f) : heap_obj_count_(0), f_(f) {}
+Parser::Parser(FILE *f) : heap_obj_count_(0), f_(f), heap_obj_json_(NULL), heap_obj_json_size_(0) {}
+
+Parser::~Parser() {
+  if (heap_obj_json_) {
+    free(heap_obj_json_);
+    heap_obj_json_ = NULL;
+  }
+}
 
 const char * Parser::get_intern_string(const char *str) {
   assert(str);
@@ -184,8 +191,26 @@ bool Parser::HeapDumpHandler::RawNumber(const char* str, rapidjson::SizeType len
 }
 
 const char * Parser::current_heap_object_json() {
-  // TODO
-  return NULL;
+  assert (handler_.state_ != HeapDumpHandler::kFinish || handler_.state_ != HeapDumpHandler::kStart);
+
+  size_t size = handler_.obj_end_pos_ - handler_.obj_start_pos_;
+  assert (size > 0);
+  if (size > heap_obj_json_size_) {
+    if (heap_obj_json_) {
+      delete[] heap_obj_json_;
+    }
+
+    heap_obj_json_ = new char[size+1];
+    heap_obj_json_size_ = size;
+  }
+
+  off_t cur_pos = ftello(f_);
+  fseek(f_, handler_.obj_start_pos_, SEEK_SET);
+  fread(heap_obj_json_, size, 1, f_);
+  heap_obj_json_[size] = '\0';
+  fseek(f_, cur_pos, SEEK_SET);
+
+  return heap_obj_json_;
 }
 
 }

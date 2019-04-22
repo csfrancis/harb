@@ -45,7 +45,8 @@ class Parser {
       bool EndArray(rapidjson::SizeType elementCount);
 
       enum State {
-        kStart,
+        kStart = 0,
+        kFinish,
         kInsideObject,
         kFinishObject,
         kAddress,
@@ -78,12 +79,15 @@ class Parser {
   StringSet intern_strings_;
   HeapDumpHandler handler_;
   FILE *f_;
+  char *heap_obj_json_;
+  size_t heap_obj_json_size_;
 
   const char * get_intern_string(const char *str);
 
 public:
 
   Parser(FILE *f);
+  ~Parser();
 
   RubyHeapObj* create_heap_object(RubyValueType type);
 
@@ -105,6 +109,7 @@ public:
       func(handler_.obj_);
     }
 
+    handler_.state_ = HeapDumpHandler::kFinish;
     if (reader.HasParseError() && reader.GetParseErrorCode() != rapidjson::kParseErrorDocumentEmpty) {
       // TODO: something
     }
