@@ -18,7 +18,7 @@ Graph::Graph(FILE *f) {
 
   root_ = parser_->create_heap_object(RUBY_T_ROOT);
 
-  parser_->parse([&] (RubyHeapObj *obj, json_t *json_obj __attribute__((unused))) {
+  parser_->parse([&] (RubyHeapObj *obj) {
     obj->graph = this;
     if (obj->is_root_object()) {
       root_->as.root.children->push_back(obj);

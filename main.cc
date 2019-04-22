@@ -129,11 +129,10 @@ cmd_diff(const char *args) {
   }
 
   Parser p(f);
-  p.parse([&] (RubyHeapObj *obj, json_t *json_obj) {
+  p.parse([&] (RubyHeapObj *obj) {
     if (!obj->is_root_object() && graph_->get_heap_object(obj->get_addr()) == NULL) {
-      char *s = json_dumps(json_obj, 0);
+      const char *s = p.current_heap_object_json();
       fprintf(out, "%s\n", s);
-      free(s);
     }
   });
 
