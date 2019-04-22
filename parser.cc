@@ -80,6 +80,8 @@ bool Parser::HeapDumpHandler::Key(const char* str, rapidjson::SizeType length, b
         state_ = kFlags;
       } else if (strncmp(str, "struct", length) == 0) {
         state_ = kStruct;
+      } else if (strncmp(str, "name", length) == 0) {
+        state_ = kName;
       } else if (strncmp(str, "imemo_type", length) == 0) {
         state_ = kStruct;
       } else if (strncmp(str, "root", length) == 0) {
@@ -116,6 +118,7 @@ bool Parser::HeapDumpHandler::String(const char* str, rapidjson::SizeType length
       return true;
     case kValue:
     case kStruct:
+    case kName:
     case kImemoType:
       obj_->as.obj.as.value = parser_->get_intern_string(str);
       state_ = kInsideObject;

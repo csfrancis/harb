@@ -53,6 +53,7 @@ class Parser {
         kType,
         kReferences,
         kClass,
+        kName,
         kMemsize,
         kFrozen,
         kShared,
