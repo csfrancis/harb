@@ -56,4 +56,3 @@ harb>
 - libcityhash-dev
 - libreadline-dev
 - sparsehash
-- [jansson](https://github.com/akheron/jansson) >= 2.7
