@@ -7,6 +7,9 @@ namespace harb {
 
 DominatorTree::DominatorTree(RubyHeapObj *root, int32_t num_nodes)
   : root(root), num_nodes(num_nodes + 1), count(0) {
+  progress = new harb::Progress("generating dominator tree", num_nodes * 3);
+  progress->start();
+
   arr = new int32_t[num_nodes];
   rev = new int32_t[num_nodes];
   label = new int32_t[num_nodes];
@@ -25,18 +28,18 @@ DominatorTree::DominatorTree(RubyHeapObj *root, int32_t num_nodes)
     bucket[i] = new std::vector<int32_t>();
     tree[i] = new std::vector<int32_t>();
   }
-
-  progress = new harb::Progress("generating dominator tree", num_nodes * 3);
 }
 
 DominatorTree::~DominatorTree() {
-  delete objs;
+  delete[] objs;
 
   for (int32_t i = 0; i < this->num_nodes; ++i) {
     delete tree[i];
   }
 
-  delete tree;
+  delete[] tree;
+
+  delete progress;
 }
 
 void DominatorTree::dfs_child(RubyHeapObj *obj, RubyHeapObj *child) {
@@ -125,21 +128,19 @@ void DominatorTree::calculate_sdom() {
 }
 
 void DominatorTree::cleanup_intermediate_state() {
-  delete arr;
-  delete rev;
-  delete label;
-  delete sdom;
-  delete parent;
-  delete dsu;
+  delete[] arr;
+  delete[] rev;
+  delete[] label;
+  delete[] sdom;
+  delete[] parent;
+  delete[] dsu;
 
   for (int32_t i = 0; i < this->num_nodes; ++i) {
     delete reverse_graph[i];
     delete bucket[i];
   }
-  delete reverse_graph;
-  delete bucket;
-
-  delete progress;
+  delete[] reverse_graph;
+  delete[] bucket;
 }
 
 void DominatorTree::calculate() {
