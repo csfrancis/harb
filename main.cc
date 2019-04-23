@@ -14,8 +14,8 @@
 
 #include <deque>
 
-#include <sparsehash/sparse_hash_map>
-#include <sparsehash/sparse_hash_set>
+#include "sparsehash/sparse_hash_map"
+#include "sparsehash/sparse_hash_set"
 
 #include "graph.h"
 #include "ruby_heap_obj.h"

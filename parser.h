@@ -4,8 +4,8 @@
 #include <vector>
 
 #include <city.h>
-#include <sparsehash/sparse_hash_set>
 
+#include "sparsehash/sparse_hash_set"
 #include "rapidjson/reader.h"
 #include "rapidjson/filereadstream.h"
 

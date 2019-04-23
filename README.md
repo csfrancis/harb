@@ -60,4 +60,3 @@ harb>
 - libgoogle-perftools-dev
 - libcityhash-dev
 - libreadline-dev
-- sparsehash

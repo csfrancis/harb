@@ -3,7 +3,7 @@
 
 #include <inttypes.h>
 
-#include <sparsehash/sparse_hash_map>
+#include "sparsehash/sparse_hash_map"
 
 #include "parser.h"
 #include "ruby_heap_obj.h"
