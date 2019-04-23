@@ -3,8 +3,6 @@
 
 #include <vector>
 
-#include <city.h>
-
 #include "sparsehash/sparse_hash_set"
 #include "rapidjson/reader.h"
 #include "rapidjson/filereadstream.h"
@@ -17,14 +15,6 @@ class Parser {
   struct eqstr {
     bool operator()(const char* s1, const char* s2) const {
       return (s1 == s2) || (s1 && s2 && strcmp(s1, s2) == 0);
-    }
-  };
-
-  template<class T> class CityHasher;
-  template<> class CityHasher<const char *> {
-  public:
-    std::size_t operator()(const char * s) const {
-      return CityHash64(s, strlen(s));
     }
   };
 
@@ -73,8 +63,7 @@ class Parser {
       std::vector<uint64_t> refs_to_;
   };
 
-  typedef CityHasher<const char *> CityHasherString;
-  typedef google::sparse_hash_set<const char *, CityHasherString, eqstr> StringSet;
+  typedef google::sparse_hash_set<const char *, std::hash<const char *>, eqstr> StringSet;
 
   int32_t heap_obj_count_;
   StringSet intern_strings_;

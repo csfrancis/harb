@@ -3,7 +3,7 @@ CXXFLAGS=-std=c++11 -m64 -g -Ivendor -D__STDC_FORMAT_MACROS -DNDEBUG -O3 -c -Wal
 ifdef DEBUG
   CXXFLAGS += -O0 -UNDEBUG
 endif
-LDFLAGS=-m64 -g -lreadline -lcityhash
+LDFLAGS=-m64 -g -lreadline
 SOURCES=main.cc ruby_heap_obj.cc parser.cc graph.cc dominator_tree.cc progress.cc
 OBJECTS=$(SOURCES:.cc=.o)
 EXECUTABLE=harb

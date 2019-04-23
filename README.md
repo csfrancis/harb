@@ -57,6 +57,4 @@ harb>
 ```
 
 #### Dependencies
-- libgoogle-perftools-dev
-- libcityhash-dev
 - libreadline-dev
