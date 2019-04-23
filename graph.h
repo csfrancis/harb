@@ -29,9 +29,19 @@ public:
 
   RubyHeapObj* get_heap_object(uint64_t addr);
 
-  RubyHeapObj* get_idom(RubyHeapObj *obj);
+  RubyHeapObj* get_idom(RubyHeapObj *obj) {
+    return dominator_tree_->get_idom(obj);
+  }
 
-  size_t get_retained_size(RubyHeapObj *obj);
+  void get_dominators(RubyHeapObj *obj, std::vector<RubyHeapObj *> &dominators) {
+    return dominator_tree_->get_dominators(obj, dominators);
+  }
+
+  size_t get_retained_size(RubyHeapObj *obj) {
+    size_t size = 0;
+    dominator_tree_->retained_size(obj, size);
+    return size;
+  }
 
   size_t get_num_heap_objects() { return heap_map_.size(); }
 

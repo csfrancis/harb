@@ -50,16 +50,18 @@ typedef struct command {
 static void cmd_quit(const char *);
 static void cmd_help(const char *);
 static void cmd_print(const char *);
-static void cmd_idom(const char *);
 static void cmd_rootpath(const char *);
+static void cmd_idom(const char *);
+static void cmd_dominators(const char *);
 static void cmd_summary(const char *);
 static void cmd_diff(const char *);
 
 command_t commands_[] = {
   { "quit", cmd_quit, "Exits the program" },
   { "print", cmd_print, "Prints heap info for the address specified" },
-  { "idom", cmd_idom, "Print the immediate dominator for the object specified" },
   { "rootpath", cmd_rootpath, "Display the root path for the object specified" },
+  { "idom", cmd_idom, "Print the immediate dominator for the object specified" },
+  { "dominators", cmd_dominators, "Print all objects dominated by the object specified" },
   { "help", cmd_help, "Displays this message"},
   { "summary", cmd_summary, "Display a heap dump summary" },
   { "diff", cmd_diff, "Diff current heap dump with specifed dump" },
@@ -187,6 +189,26 @@ cmd_idom(const char *args) {
     idom->print_ref_object();
   } else {
     printf("could not determine dominator for 0x%" PRIx64 ": ", obj->get_addr());
+  }
+}
+
+static void
+cmd_dominators(const char * args) {
+  RubyHeapObj *obj = get_ruby_heap_obj_arg(args);
+  if (!obj || obj->is_root_object()) {
+    return;
+  }
+
+  printf("0x%" PRIx64 " dominates:\n", obj->get_addr());
+
+  std::vector<RubyHeapObj *> dominators;
+  graph_->get_dominators(obj, dominators);
+  if (!dominators.empty()) {
+    for (auto child : dominators) {
+      child->print_ref_object();
+    }
+  } else {
+    printf("0x%" PRIx64 " does not dominate any objects\n", obj->get_addr());
   }
 }
 

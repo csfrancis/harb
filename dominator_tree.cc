@@ -169,11 +169,6 @@ void DominatorTree::calculate() {
   progress->complete();
 }
 
-RubyHeapObj * DominatorTree::get_idom(RubyHeapObj *obj) {
-  auto t = tree[obj->get_index()];
-  return objs[(*t)[0]];
-}
-
 void DominatorTree::retained_size(RubyHeapObj *obj, size_t &size) {
   size += obj->is_root_object() ? 0 : obj->get_memsize();
 

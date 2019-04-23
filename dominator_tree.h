@@ -16,8 +16,20 @@ class DominatorTree {
     ~DominatorTree();
 
     void calculate();
+
     void retained_size(RubyHeapObj *obj, size_t &size);
-    RubyHeapObj * get_idom(RubyHeapObj *obj);
+
+    RubyHeapObj * get_idom(RubyHeapObj *obj) {
+      auto t = tree[obj->get_index()];
+      return objs[(*t)[0]];
+    }
+
+    void get_dominators(RubyHeapObj *obj, std::vector<RubyHeapObj *> &dominators) {
+      auto t = tree[obj->get_index()];
+      for (size_t i = 1; i < t->size(); ++i) {
+        dominators.push_back(objs[(*t)[i]]);
+      }
+    }
 
   private:
     RubyHeapObj *root;
