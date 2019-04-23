@@ -17,6 +17,7 @@ class DominatorTree {
 
     void calculate();
     void retained_size(RubyHeapObj *obj, size_t &size);
+    RubyHeapObj * get_idom(RubyHeapObj *obj);
 
   private:
     RubyHeapObj *root;

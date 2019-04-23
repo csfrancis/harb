@@ -95,6 +95,10 @@ RubyHeapObj* Graph::get_heap_object(uint64_t addr) {
   return it->second;
 }
 
+RubyHeapObj* Graph::get_idom(RubyHeapObj *obj) {
+  return dominator_tree_->get_idom(obj);
+}
+
 size_t Graph::get_retained_size(RubyHeapObj *obj) {
   size_t size = 0;
   dominator_tree_->retained_size(obj, size);

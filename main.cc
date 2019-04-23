@@ -50,6 +50,7 @@ typedef struct command {
 static void cmd_quit(const char *);
 static void cmd_help(const char *);
 static void cmd_print(const char *);
+static void cmd_idom(const char *);
 static void cmd_rootpath(const char *);
 static void cmd_summary(const char *);
 static void cmd_diff(const char *);
@@ -57,6 +58,7 @@ static void cmd_diff(const char *);
 command_t commands_[] = {
   { "quit", cmd_quit, "Exits the program" },
   { "print", cmd_print, "Prints heap info for the address specified" },
+  { "idom", cmd_idom, "Print the immediate dominator for the object specified" },
   { "rootpath", cmd_rootpath, "Display the root path for the object specified" },
   { "help", cmd_help, "Displays this message"},
   { "summary", cmd_summary, "Display a heap dump summary" },
@@ -173,6 +175,22 @@ cmd_print(const char *args) {
 }
 
 static void
+cmd_idom(const char *args) {
+  RubyHeapObj *obj = get_ruby_heap_obj_arg(args);
+  if (!obj || obj->is_root_object()) {
+    return;
+  }
+
+  RubyHeapObj *idom = graph_->get_idom(obj);
+  if (idom) {
+    printf("dominator for 0x%" PRIx64 ":\n", obj->get_addr());
+    idom->print_ref_object();
+  } else {
+    printf("could not determine dominator for 0x%" PRIx64 ": ", obj->get_addr());
+  }
+}
+
+static void
 cmd_rootpath(const char *args) {
   bool found = false;
   RubyHeapObj *obj = get_ruby_heap_obj_arg(args);
@@ -211,7 +229,7 @@ cmd_rootpath(const char *args) {
     return;
   }
 
-  printf("\nroot path to 0x%" PRIx64 ":\n", obj->get_addr());
+  printf("root path to 0x%" PRIx64 ":\n", obj->get_addr());
   while (cur != NULL) {
     cur->print_ref_object();
     cur = parent[cur];

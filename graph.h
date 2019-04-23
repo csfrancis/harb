@@ -29,6 +29,8 @@ public:
 
   RubyHeapObj* get_heap_object(uint64_t addr);
 
+  RubyHeapObj* get_idom(RubyHeapObj *obj);
+
   size_t get_retained_size(RubyHeapObj *obj);
 
   size_t get_num_heap_objects() { return heap_map_.size(); }
