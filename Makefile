@@ -1,5 +1,5 @@
 CXX=g++
-CXXFLAGS=-std=c++11 -m64 -g -D__STDC_FORMAT_MACROS -DNDEBUG -O3 -c -Wall
+CXXFLAGS=-std=c++11 -m64 -g -Ivendor -D__STDC_FORMAT_MACROS -DNDEBUG -O3 -c -Wall
 ifdef DEBUG
   CXXFLAGS += -O0 -UNDEBUG
 endif
