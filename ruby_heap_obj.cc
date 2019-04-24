@@ -163,25 +163,25 @@ const char * RubyHeapObj::get_object_summary(char *buf, size_t buf_sz) {
   return buf;
 }
 
-void RubyHeapObj::print_ref_object() {
+void RubyHeapObj::print_ref_object(FILE *out) {
   char buf[64];
   if (is_root_object()) {
-    printf("%20s  ROOT (%s)\n", "", get_root_name());
+    fprintf(out, "%20s  ROOT (%s)\n", "", get_root_name());
   } else {
-    printf("%20s  0x%" PRIx64 " (%s)\n", "", get_addr(), get_object_summary(buf, sizeof(buf)));
+    fprintf(out, "%20s  0x%" PRIx64 " (%s)\n", "", get_addr(), get_object_summary(buf, sizeof(buf)));
   }
 }
 
-void RubyHeapObj::print_object() {
+void RubyHeapObj::print_object(FILE *out) {
   uint32_t type = flags & RUBY_T_MASK;
   if (type == RUBY_T_ROOT) {
-    printf("ROOT (%s)\n", get_root_name());
+    fprintf(out, "ROOT (%s)\n", get_root_name());
   } else {
     char buf[64] = { 0 };
     const char *p = buf;
     const char *name_title = NULL;
     sprintf(buf, "0x%" PRIx64, get_addr());
-    printf("%18s: \"%s\"\n", buf, get_value_type_string(flags));
+    fprintf(out, "%18s: \"%s\"\n", buf, get_value_type_string(flags));
     if (type == RUBY_T_DATA) {
       name_title = "struct";
       p = get_value();
@@ -203,38 +203,39 @@ void RubyHeapObj::print_object() {
       p = get_value();
     }
     if (name_title) {
-      printf("%18s: %s%s%s\n", name_title,
+      fprintf(out, "%18s: %s%s%s\n", name_title,
         type == RUBY_T_STRING ? "\"" : "",
         p,
         type == RUBY_T_STRING ? "\"" : "");
     }
 
-    printf("%18s: %'zu\n", "memsize", get_memsize());
+    fprintf(out, "%18s: %'zu\n", "memsize", get_memsize());
 
-    printf("%18s: %'zu\n", "retained memsize", graph->get_retained_size(this));
+    fprintf(out, "%18s: %'zu\n", "retained memsize", graph->get_retained_size(this));
 
     if (flags & RUBY_FL_SHARED) {
-      printf("%18s: %s\n", "shared", "true");
+      fprintf(out, "%18s: %s\n", "shared", "true");
     }
 
     if (flags & RUBY_FL_FROZEN) {
-      printf("%18s: %s\n", "frozen", "true");
+      fprintf(out, "%18s: %s\n", "frozen", "true");
     }
 
     if (has_refs_to()) {
-      printf("%18s: [\n", "references to");
+      fprintf(out, "%18s: [\n", "references to");
       for (uint32_t i = 0; refs_to.obj[i]; ++i) {
-        refs_to.obj[i]->print_ref_object();
+        refs_to.obj[i]->print_ref_object(out);
       }
-      printf("%18s  ]\n", "");
+      fprintf(out, "%18s  ]\n", "");
     }
     if (refs_from.size() > 0) {
-      printf("%18s: [\n", "referenced from");
+      fprintf(out, "%18s: [\n", "referenced from");
       for (auto it = refs_from.begin(); it != refs_from.end(); ++it) {
-        (*it)->print_ref_object();
+        (*it)->print_ref_object(out);
       }
-      printf("%18s  ]\n", "");
+      fprintf(out, "%18s  ]\n", "");
     }
   }
 }
+
 }
