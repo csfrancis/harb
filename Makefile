@@ -4,7 +4,7 @@ ifdef DEBUG
   CXXFLAGS += -O0 -UNDEBUG
 endif
 LDFLAGS=-m64 -g -lreadline
-SOURCES=main.cc ruby_heap_obj.cc parser.cc graph.cc dominator_tree.cc progress.cc
+SOURCES=main.cc ruby_heap_obj.cc parser.cc graph.cc dominator_tree.cc progress.cc output.cc
 OBJECTS=$(SOURCES:.cc=.o)
 EXECUTABLE=harb
 

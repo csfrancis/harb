@@ -20,6 +20,7 @@
 #include "graph.h"
 #include "ruby_heap_obj.h"
 #include "progress.h"
+#include "output.h"
 
 using namespace harb;
 
@@ -173,7 +174,9 @@ cmd_print(const char *args) {
     return;
   }
 
-  obj->print_object();
+  Output::with_handle([&](FILE *out) {
+    obj->print_object(out);
+  });
 }
 
 static void
@@ -184,12 +187,15 @@ cmd_idom(const char *args) {
   }
 
   RubyHeapObj *idom = graph_->get_idom(obj);
-  if (idom) {
-    printf("dominator for 0x%" PRIx64 ":\n", obj->get_addr());
-    idom->print_ref_object();
-  } else {
-    printf("could not determine dominator for 0x%" PRIx64 ": ", obj->get_addr());
-  }
+
+  Output::with_handle([&](FILE *out) {
+    if (idom) {
+      fprintf(out, "dominator for 0x%" PRIx64 ":\n", obj->get_addr());
+      idom->print_ref_object(out);
+    } else {
+      fprintf(out, "could not determine dominator for 0x%" PRIx64 ": ", obj->get_addr());
+    }
+  });
 }
 
 static void
@@ -199,17 +205,20 @@ cmd_dominators(const char * args) {
     return;
   }
 
-  printf("0x%" PRIx64 " dominates:\n", obj->get_addr());
+  Output::with_handle([&](FILE *out) {
+    fprintf(out, "0x%" PRIx64 " dominates:\n", obj->get_addr());
 
-  std::vector<RubyHeapObj *> dominators;
-  graph_->get_dominators(obj, dominators);
-  if (!dominators.empty()) {
-    for (auto child : dominators) {
-      child->print_ref_object();
+    std::vector<RubyHeapObj *> dominators;
+    graph_->get_dominators(obj, dominators);
+
+    if (!dominators.empty()) {
+      for (auto child : dominators) {
+        child->print_ref_object(out);
+      }
+    } else {
+      fprintf(out, "0x%" PRIx64 " does not dominate any objects\n", obj->get_addr());
     }
-  } else {
-    printf("0x%" PRIx64 " does not dominate any objects\n", obj->get_addr());
-  }
+  });
 }
 
 static void
@@ -246,17 +255,19 @@ cmd_rootpath(const char *args) {
     }
   }
 
-  if (!found) {
-    printf("error: could not find path to root for 0x%" PRIx64 "\n", obj->get_addr());
-    return;
-  }
+  Output::with_handle([&](FILE *out) {
+    if (!found) {
+      fprintf(out, "error: could not find path to root for 0x%" PRIx64 "\n", obj->get_addr());
+      return;
+    }
 
-  printf("root path to 0x%" PRIx64 ":\n", obj->get_addr());
-  while (cur != NULL) {
-    cur->print_ref_object();
-    cur = parent[cur];
-  }
-  printf("\n");
+    fprintf(out, "root path to 0x%" PRIx64 ":\n", obj->get_addr());
+    while (cur != NULL) {
+      cur->print_ref_object(out);
+      cur = parent[cur];
+    }
+    fprintf(out, "\n");
+  });
 }
 
 static void execute_command(char *line) {
@@ -302,6 +313,8 @@ static void execute_command(char *line) {
 int
 main(int argc, char **argv) {
   char *line;
+
+  Output::initialize();
 
   setlocale(LC_ALL, "");
 

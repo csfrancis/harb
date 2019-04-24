@@ -128,9 +128,9 @@ public:
 
   const char * get_object_summary(char *buf, size_t buf_sz);
 
-  void print_ref_object();
+  void print_ref_object(FILE *);
 
-  void print_object();
+  void print_object(FILE *);
 
   static RubyValueType get_value_type(const char *str);
   static const char * get_value_type_string(uint32_t type);
