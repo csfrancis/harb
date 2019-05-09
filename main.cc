@@ -14,8 +14,7 @@
 
 #include <deque>
 
-#include "sparsehash/sparse_hash_map"
-#include "sparsehash/sparse_hash_set"
+#include "sparsepp/spp.h"
 
 #include "graph.h"
 #include "ruby_heap_obj.h"
@@ -71,7 +70,7 @@ command_t commands_[] = {
 
 static void
 cmd_summary(const char *) {
-  typedef google::sparse_hash_map<uint32_t, size_t> type_map_t;
+  typedef spp::sparse_hash_map<uint32_t, size_t> type_map_t;
   type_map_t type_map;
   size_t total_size = 0;
   size_t num_heap_objects = graph_->get_num_heap_objects();
@@ -231,8 +230,8 @@ cmd_rootpath(const char *args) {
 
   RubyHeapObj *cur;
   std::deque<RubyHeapObj *> q;
-  google::sparse_hash_set<RubyHeapObj *> visited;
-  google::sparse_hash_map<RubyHeapObj *, RubyHeapObj *> parent;
+  spp::sparse_hash_set<RubyHeapObj *> visited;
+  spp::sparse_hash_map<RubyHeapObj *, RubyHeapObj *> parent;
 
   q.push_back(obj);
   visited.insert(obj);

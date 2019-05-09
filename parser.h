@@ -3,7 +3,7 @@
 
 #include <vector>
 
-#include "sparsehash/sparse_hash_set"
+#include "sparsepp/spp.h"
 #include "rapidjson/reader.h"
 #include "rapidjson/filereadstream.h"
 
@@ -63,7 +63,7 @@ class Parser {
       std::vector<uint64_t> refs_to_;
   };
 
-  typedef google::sparse_hash_set<const char *, std::hash<const char *>, eqstr> StringSet;
+  typedef spp::sparse_hash_set<const char *, std::hash<const char *>, eqstr> StringSet;
 
   int32_t heap_obj_count_;
   StringSet intern_strings_;

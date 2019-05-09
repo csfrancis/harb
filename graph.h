@@ -3,7 +3,7 @@
 
 #include <inttypes.h>
 
-#include "sparsehash/sparse_hash_map"
+#include "sparsepp/spp.h"
 
 #include "parser.h"
 #include "ruby_heap_obj.h"
@@ -12,7 +12,7 @@
 namespace harb {
 
 class Graph {
-  typedef google::sparse_hash_map<uint64_t, RubyHeapObj *> RubyHeapObjMap;
+  typedef spp::sparse_hash_map<uint64_t, RubyHeapObj *> RubyHeapObjMap;
 
   Parser *parser_;
   RubyHeapObj *root_;
