@@ -188,7 +188,7 @@ void RubyHeapObj::print_object(FILE *out) {
     } else if (type == RUBY_T_OBJECT || type == RUBY_T_ICLASS) {
       name_title = type == RUBY_T_OBJECT ? "class" : "name";
       p = get_class_obj()->get_value();
-    } else if (type == RUBY_T_STRING) {
+    } else if (type == RUBY_T_STRING || type == RUBY_T_SYMBOL) {
       name_title = "value";
       p = get_value();
     } else if (type == RUBY_T_CLASS || type == RUBY_T_MODULE) {
