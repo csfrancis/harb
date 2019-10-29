@@ -65,6 +65,8 @@ RubyValueType RubyHeapObj::get_value_type(const char *type) {
     return RUBY_T_UNDEF;
   } else if (strcmp(type, "ZOMBIE") == 0) {
     return RUBY_T_ZOMBIE;
+  } else if (strcmp(type, "MOVED") == 0) {
+    return RUBY_T_MOVED;
   } else if (strcmp(type, "ROOT") == 0) {
     return RUBY_T_ROOT;
   } else if (strcmp(type, "IMEMO") == 0) {
@@ -123,6 +125,8 @@ const char * RubyHeapObj::get_value_type_string(uint32_t type) {
     return "UNDEF";
   } else if (t == RUBY_T_ZOMBIE) {
     return "ZOMBIE";
+  } else if (t == RUBY_T_MOVED) {
+    return "MOVED";
   } else if (t == RUBY_T_ROOT) {
     return "ROOT";
   } else if (t == RUBY_T_IMEMO) {
