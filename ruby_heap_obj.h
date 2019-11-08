@@ -31,12 +31,13 @@ enum RubyValueType {
     RUBY_T_FALSE  = 0x13,
     RUBY_T_SYMBOL = 0x14,
     RUBY_T_FIXNUM = 0x15,
+    RUBY_T_UNDEF  = 0x16,
 
     RUBY_T_IMEMO  = 0x1a,
-    RUBY_T_UNDEF  = 0x1b,
-    RUBY_T_NODE   = 0x1c,
-    RUBY_T_ICLASS = 0x1d,
-    RUBY_T_ZOMBIE = 0x1e,
+    RUBY_T_NODE   = 0x1b,
+    RUBY_T_ICLASS = 0x1c,
+    RUBY_T_ZOMBIE = 0x1d,
+    RUBY_T_MOVED  = 0x1e,
 
     RUBY_T_MASK   = 0x1f
 };
