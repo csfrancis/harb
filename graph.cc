@@ -1,7 +1,5 @@
 #include <stdio.h>
 
-#include <jansson.h>
-
 #include "progress.h"
 #include "graph.h"
 #include "parser.h"
