@@ -2,6 +2,8 @@
 #define HARB_RUBY_HEAP_OBJ_H
 
 #include <unistd.h>
+#include <stdio.h>
+#include <stdint.h>
 
 #include <vector>
 
